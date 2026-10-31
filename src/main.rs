@@ -1,3 +1,6 @@
+// Release builds on Windows open no console window behind the app.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod db;
 mod grid;
 mod sql;
@@ -16,6 +19,12 @@ use db::{Config, Db, Kind, Page, ResultSet, Table, Tls};
 use store::Appearance;
 
 const PAGE: u64 = 200;
+/// The modifier for shortcuts, as macOS and everyone else name it.
+const RUN_KEY: &str = if cfg!(target_os = "macos") {
+    "Cmd"
+} else {
+    "Ctrl"
+};
 const DATA_GRID: (&str, &str) = ("data-grid", "data-grid-head");
 const QUERY_GRID: (&str, &str) = ("query-grid", "query-grid-head");
 const STRUCTURE_GRID: (&str, &str) = ("structure-grid", "structure-grid-head");
@@ -30,6 +39,7 @@ fn main() -> iced::Result {
             size: iced::Size::new(1280.0, 800.0),
             min_size: Some(iced::Size::new(900.0, 560.0)),
             icon: window_icon(),
+            #[cfg(target_os = "linux")]
             platform_specific: iced::window::settings::PlatformSpecific {
                 // Matches packaging/sqlsea.desktop so launchers show the icon.
                 application_id: "sqlsea".into(),
@@ -1238,7 +1248,7 @@ impl Session {
             Tab::Data => self.data_tools(),
             Tab::Structure => space().into(),
             Tab::Query => row![
-                muted("Ctrl+Enter"),
+                muted(format!("{RUN_KEY}+Enter")),
                 small_key("Run", theme::key_primary, Some(Message::Run)),
             ]
             .spacing(12)
@@ -1375,7 +1385,10 @@ impl Session {
 
         let results: Element<_> = match &self.query {
             Load::Idle => empty_state(
-                "Results show here. Write SQL above and press Ctrl+Enter; a selection runs on its own.",
+                format!(
+                    "Results show here. Write SQL above and press {RUN_KEY}+Enter; \
+                     a selection runs on its own."
+                ),
                 None,
             ),
             Load::Loading => grid::skeleton(),

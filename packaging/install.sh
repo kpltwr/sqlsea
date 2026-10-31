@@ -1,10 +1,25 @@
 #!/bin/sh
 # Installs sqlsea for the current user: the binary, its icons and a launcher entry.
-# Run after `cargo build --release`, from any folder. Undo with `install.sh --remove`.
+# Works from an unpacked release (sqlsea beside this script) or from the source
+# tree after `cargo build --release`, started from any folder.
+# Undo with `install.sh --remove`.
 set -eu
 
-# Work from the repository root, wherever the script was started.
-cd "$(dirname "$0")/.."
+here=$(cd "$(dirname "$0")" && pwd)
+if [ -f "$here/sqlsea" ]; then
+    # An unpacked release.
+    app="$here/sqlsea"
+    png="$here/icons/icon-"
+    svg="$here/icons/icon.svg"
+    desktop="$here/sqlsea.desktop"
+else
+    # The source tree.
+    root=$(dirname "$here")
+    app="$root/target/release/sqlsea"
+    png="$root/brand/png/icon-"
+    svg="$root/brand/svg/icon.svg"
+    desktop="$here/sqlsea.desktop"
+fi
 
 BIN="$HOME/.local/bin"
 APPS="$HOME/.local/share/applications"
@@ -19,18 +34,18 @@ if [ "${1:-}" = "--remove" ]; then
     exit 0
 fi
 
-[ -x target/release/sqlsea ] || { echo "Build first: cargo build --release" >&2; exit 1; }
+[ -x "$app" ] || { echo "Build first: cargo build --release" >&2; exit 1; }
 
-install -Dm755 target/release/sqlsea "$BIN/sqlsea"
+install -Dm755 "$app" "$BIN/sqlsea"
 for s in $SIZES; do
-    install -Dm644 "brand/png/icon-$s.png" "$ICONS/${s}x${s}/apps/sqlsea.png"
+    install -Dm644 "$png$s.png" "$ICONS/${s}x${s}/apps/sqlsea.png"
 done
-install -Dm644 brand/svg/icon.svg "$ICONS/scalable/apps/sqlsea.svg"
+install -Dm644 "$svg" "$ICONS/scalable/apps/sqlsea.svg"
 # The desktop session's PATH often lacks ~/.local/bin, and launchers hide
 # entries whose program they cannot find, so point at the binary directly.
 mkdir -p "$APPS"
 sed -e "s|^Exec=sqlsea|Exec=$BIN/sqlsea|" -e "s|^TryExec=.*|TryExec=$BIN/sqlsea|" \
-    packaging/sqlsea.desktop > "$APPS/sqlsea.desktop"
+    "$desktop" > "$APPS/sqlsea.desktop"
 chmod 644 "$APPS/sqlsea.desktop"
 
 command -v update-desktop-database >/dev/null && update-desktop-database -q "$APPS" || true

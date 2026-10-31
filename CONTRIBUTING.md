@@ -40,6 +40,7 @@ The TLS server's certificate must be signed by that CA and valid for `localhost`
 | `src/sql.rs` | SQL syntax highlighting |
 | `src/theme.rs` | Every colour, font and size, light and dark |
 | `brand/` | Icons and logos; see `brand/BRAND.md` |
+| `packaging/` | Release packages: `package.sh` (Linux, macOS), `windows/package.ps1` |
 
 Views never name a colour directly; add it to both palettes in `src/theme.rs` and use it through a style function.
 

@@ -32,3 +32,6 @@ strip = true
 
 [dev-dependencies]
 resvg = "0.49.0"
+
+[target."cfg(windows)".build-dependencies]
+winresource = "0.1.34"

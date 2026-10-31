@@ -4,6 +4,11 @@ A small native database client in Rust. Browse tables, edit rows, run SQL. Built
 
 Supports PostgreSQL and SQLite, on Linux, macOS and Windows.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/dark.png">
+  <img src="docs/screenshots/light.png" alt="sqlsea showing a customers table with one row open for editing">
+</picture>
+
 ## Install
 
 Build a package on the platform you want it for; each script writes to `dist/`.

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1280 640" width="1280" height="640">
+  <!-- Repository social preview, 1280 by 640 -->
+  <defs>
+    <g id="icon">
+      <path d="M120 40 H408 A56 56 0 0 1 464 96 V384 L392 456 H104 A56 56 0 0 1 48 400 V112 Z" fill="#003d98" transform="translate(0 16)"/>
+      <path d="M120 40 H408 A56 56 0 0 1 464 96 V384 L392 456 H104 A56 56 0 0 1 48 400 V112 Z" fill="#0462d3"/>
+      <g stroke="#f8fbfe"><g fill="none" stroke-width="36" stroke-linecap="round">
+    <path d="M146 172 c18.33 -26 36.67 -26 55 0 s36.67 26 55 0 s36.67 -26 55 0 s36.67 26 55 0"/>
+    <path d="M146 262 H170 M230 262 H366"/>
+    <path d="M146 338 H170 M230 338 H366" stroke-opacity="0.6"/>
+  </g></g>
+    </g>
+    <g id="icon-small">
+      <path d="M7 2 H27 A3 3 0 0 1 30 5 V24 L26 28 H5 A3 3 0 0 1 2 25 V6 Z" fill="#003d98" transform="translate(0 2)"/>
+      <path d="M7 2 H27 A3 3 0 0 1 30 5 V24 L26 28 H5 A3 3 0 0 1 2 25 V6 Z" fill="#0462d3"/>
+      <g fill="none" stroke="#f8fbfe" stroke-width="3.5" stroke-linecap="round"><path d="M9 11 c2.33 -3 4.67 -3 7 0 s4.67 3 7 0"/><path d="M9 19.5 H23"/></g>
+    </g>
+  </defs>
+  <rect width="1280" height="640" fill="#f8fbfe"/>
+  <text x="96" y="318" font-family="Familjen Grotesk" font-weight="600" font-size="132" letter-spacing="-3.7" fill="#111825">sqlsea</text>
+  <text x="100" y="392" font-family="IBM Plex Sans" font-size="30" fill="#363e49">A small native database client</text>
+  <text x="100" y="434" font-family="IBM Plex Sans" font-size="30" fill="#363e49">for PostgreSQL and SQLite.</text>
+  <use xlink:href="#icon" transform="translate(824 148) scale(0.703125)"/>
+</svg>

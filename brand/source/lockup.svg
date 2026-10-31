@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 264 80" width="264" height="80">
+  <g transform="translate(0 3) scale(0.140625)">
+  <path d="M120 40 H408 A56 56 0 0 1 464 96 V384 L392 456 H104 A56 56 0 0 1 48 400 V112 Z" fill="#003d98" transform="translate(0 16)"/>
+  <path d="M120 40 H408 A56 56 0 0 1 464 96 V384 L392 456 H104 A56 56 0 0 1 48 400 V112 Z" fill="#0462d3"/>
+  <g stroke="#f8fbfe"><g fill="none" stroke-width="36" stroke-linecap="round">
+    <path d="M146 172 c18.33 -26 36.67 -26 55 0 s36.67 26 55 0 s36.67 -26 55 0 s36.67 26 55 0"/>
+    <path d="M146 262 H170 M230 262 H366"/>
+    <path d="M146 338 H170 M230 338 H366" stroke-opacity="0.6"/>
+  </g></g>
+  </g>
+  <text x="86" y="56" font-family="Familjen Grotesk" font-weight="600" font-size="50" letter-spacing="-1.4" fill="#111825">sqlsea</text>
+</svg>

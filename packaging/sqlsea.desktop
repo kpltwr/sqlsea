@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=sqlsea
+GenericName=Database client
+Comment=Browse tables, edit rows and run SQL on PostgreSQL and SQLite
+Exec=sqlsea %f
+Icon=sqlsea
+Terminal=false
+Categories=Development;Database;
+MimeType=application/vnd.sqlite3;application/x-sqlite3;
+Keywords=sql;database;postgres;postgresql;sqlite;
+StartupWMClass=sqlsea

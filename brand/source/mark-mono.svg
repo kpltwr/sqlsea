@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="110 128 292 228" width="292" height="228">
+  <!-- The glyph alone, for places where the tile would be a box inside a box -->
+  <g stroke="#111825"><g fill="none" stroke-width="36" stroke-linecap="round">
+    <path d="M146 172 c18.33 -26 36.67 -26 55 0 s36.67 26 55 0 s36.67 -26 55 0 s36.67 26 55 0"/>
+    <path d="M146 262 H170 M230 262 H366"/>
+    <path d="M146 338 H170 M230 338 H366" stroke-opacity="0.6"/>
+  </g></g>
+</svg>

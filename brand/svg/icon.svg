@@ -1,0 +1,13 @@
+<svg width="512" height="512" xmlns="http://www.w3.org/2000/svg">
+    <g transform="matrix(1 0 0 1 0 16)">
+        <path fill="#003d98" stroke="none" d="M 120 40 L 408 40 C 438.92795 40 464 65.07205 464 96 L 464 384 L 392 456 L 104 456 C 73.07205 456 48 430.92795 48 400 L 48 112 Z"/>
+    </g>
+    <path fill="#0462d3" stroke="none" d="M 120 40 L 408 40 C 438.92795 40 464 65.07205 464 96 L 464 384 L 392 456 L 104 456 C 73.07205 456 48 430.92795 48 400 L 48 112 Z"/>
+    <g>
+        <g>
+            <path fill="none" stroke="#f8fbfe" stroke-width="36" stroke-linecap="round" d="M 146 172 C 164.33 146 182.67001 146 201 172 C 219.33 198 237.66998 198 256 172 C 274.33 146 292.67 146 311 172 C 329.33 198 347.66998 198 366 172"/>
+            <path fill="none" stroke="#f8fbfe" stroke-width="36" stroke-linecap="round" d="M 146 262 L 170 262 M 230 262 L 366 262"/>
+            <path fill="none" stroke="#f8fbfe" stroke-opacity="0.6" stroke-width="36" stroke-linecap="round" d="M 146 338 L 170 338 M 230 338 L 366 338"/>
+        </g>
+    </g>
+</svg>

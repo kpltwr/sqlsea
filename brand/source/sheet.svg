@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1600 1360" width="1600" height="1360">
+  <!-- sqlsea brand sheet -->
+  <defs>
+    <g id="icon">
+      <path d="M120 40 H408 A56 56 0 0 1 464 96 V384 L392 456 H104 A56 56 0 0 1 48 400 V112 Z" fill="#003d98" transform="translate(0 16)"/>
+      <path d="M120 40 H408 A56 56 0 0 1 464 96 V384 L392 456 H104 A56 56 0 0 1 48 400 V112 Z" fill="#0462d3"/>
+      <g stroke="#f8fbfe"><g fill="none" stroke-width="36" stroke-linecap="round">
+    <path d="M146 172 c18.33 -26 36.67 -26 55 0 s36.67 26 55 0 s36.67 -26 55 0 s36.67 26 55 0"/>
+    <path d="M146 262 H170 M230 262 H366"/>
+    <path d="M146 338 H170 M230 338 H366" stroke-opacity="0.6"/>
+  </g></g>
+    </g>
+    <g id="icon-small">
+      <path d="M7 2 H27 A3 3 0 0 1 30 5 V24 L26 28 H5 A3 3 0 0 1 2 25 V6 Z" fill="#003d98" transform="translate(0 2)"/>
+      <path d="M7 2 H27 A3 3 0 0 1 30 5 V24 L26 28 H5 A3 3 0 0 1 2 25 V6 Z" fill="#0462d3"/>
+      <g fill="none" stroke="#f8fbfe" stroke-width="3.5" stroke-linecap="round"><path d="M9 11 c2.33 -3 4.67 -3 7 0 s4.67 3 7 0"/><path d="M9 19.5 H23"/></g>
+    </g>
+  </defs>
+  <rect width="1600" height="1360" fill="#f8fbfe"/>
+  <use xlink:href="#icon" transform="translate(80 64) scale(0.25)"/>
+  <text x="232" y="168" font-family="Familjen Grotesk" font-weight="600" font-size="88" letter-spacing="-2.5" fill="#111825">sqlsea</text>
+  <text x="1520" y="122" text-anchor="end" font-family="IBM Plex Sans" font-size="20" fill="#363e49">A small native database client for PostgreSQL and SQLite.</text>
+  <text x="1520" y="152" text-anchor="end" font-family="IBM Plex Sans" font-size="16" fill="#5d646e">Brand kit, version 1, November 2026</text>
+  <rect x="80" y="240" width="1440" height="1" fill="#dadee4"/>
+  <text x="80" y="300" font-family="Familjen Grotesk" font-weight="500" font-size="17" fill="#363e49">App icon</text>
+  <use xlink:href="#icon" transform="translate(80 336) scale(0.5)"/>
+  <use xlink:href="#icon" transform="translate(376 464) scale(0.25)"/>
+  <use xlink:href="#icon" transform="translate(544 528) scale(0.125)"/>
+  <use xlink:href="#icon-small" transform="translate(648 560)"/>
+  <use xlink:href="#icon-small" transform="translate(712 576) scale(0.5)"/>
+  <text x="80" y="628" font-family="IBM Plex Sans" font-size="13" fill="#5d646e">256</text>
+  <text x="376" y="628" font-family="IBM Plex Sans" font-size="13" fill="#5d646e">128</text>
+  <text x="544" y="628" font-family="IBM Plex Sans" font-size="13" fill="#5d646e">64</text>
+  <text x="648" y="628" font-family="IBM Plex Sans" font-size="13" fill="#5d646e">32</text>
+  <text x="712" y="628" font-family="IBM Plex Sans" font-size="13" fill="#5d646e">16</text>
+  <text x="840" y="300" font-family="Familjen Grotesk" font-weight="500" font-size="17" fill="#363e49">On graphite</text>
+  <rect x="840" y="336" width="680" height="256" rx="8" fill="#121823"/>
+  <use xlink:href="#icon" transform="translate(896 400) scale(0.25)"/>
+  <text x="1048" y="500" font-family="Familjen Grotesk" font-weight="600" font-size="88" letter-spacing="-2.5" fill="#e3e8ee">sqlsea</text>
+  <rect x="80" y="676" width="1440" height="1" fill="#dadee4"/>
+  <text x="80" y="736" font-family="Familjen Grotesk" font-weight="500" font-size="17" fill="#363e49">Colour</text>
+  <rect x="80" y="768" width="176" height="88" rx="6" fill="#0462d3"/>
+  <text x="80" y="884" font-family="IBM Plex Sans" font-weight="500" font-size="15" fill="#111825">Cobalt</text>
+  <text x="80" y="906" font-family="JetBrains Mono" font-size="13" fill="#5d646e">#0462d3</text>
+  <text x="80" y="926" font-family="IBM Plex Sans" font-size="13" fill="#5d646e">Primary action, selection</text>
+  <rect x="280" y="768" width="176" height="88" rx="6" fill="#003d98"/>
+  <text x="280" y="884" font-family="IBM Plex Sans" font-weight="500" font-size="15" fill="#111825">Cobalt edge</text>
+  <text x="280" y="906" font-family="JetBrains Mono" font-size="13" fill="#5d646e">#003d98</text>
+  <text x="280" y="926" font-family="IBM Plex Sans" font-size="13" fill="#5d646e">Key edges</text>
+  <rect x="480" y="768" width="176" height="88" rx="6" fill="#e3f0ff" stroke="#dadee4"/>
+  <text x="480" y="884" font-family="IBM Plex Sans" font-weight="500" font-size="15" fill="#111825">Wash</text>
+  <text x="480" y="906" font-family="JetBrains Mono" font-size="13" fill="#5d646e">#e3f0ff</text>
+  <text x="480" y="926" font-family="IBM Plex Sans" font-size="13" fill="#5d646e">The chosen row</text>
+  <rect x="680" y="768" width="176" height="88" rx="6" fill="#75b4ff"/>
+  <text x="680" y="884" font-family="IBM Plex Sans" font-weight="500" font-size="15" fill="#111825">Sky</text>
+  <text x="680" y="906" font-family="JetBrains Mono" font-size="13" fill="#5d646e">#75b4ff</text>
+  <text x="680" y="926" font-family="IBM Plex Sans" font-size="13" fill="#5d646e">SQL keywords</text>
+  <rect x="880" y="768" width="176" height="88" rx="6" fill="#121823"/>
+  <text x="880" y="884" font-family="IBM Plex Sans" font-weight="500" font-size="15" fill="#111825">Graphite</text>
+  <text x="880" y="906" font-family="JetBrains Mono" font-size="13" fill="#5d646e">#121823</text>
+  <text x="880" y="926" font-family="IBM Plex Sans" font-size="13" fill="#5d646e">The SQL editor</text>
+  <rect x="1080" y="768" width="176" height="88" rx="6" fill="#e3e8ee" stroke="#dadee4"/>
+  <text x="1080" y="884" font-family="IBM Plex Sans" font-weight="500" font-size="15" fill="#111825">Graphite ink</text>
+  <text x="1080" y="906" font-family="JetBrains Mono" font-size="13" fill="#5d646e">#e3e8ee</text>
+  <text x="1080" y="926" font-family="IBM Plex Sans" font-size="13" fill="#5d646e">Text on graphite</text>
+  <rect x="1280" y="768" width="176" height="88" rx="6" fill="#c9302d"/>
+  <text x="1280" y="884" font-family="IBM Plex Sans" font-weight="500" font-size="15" fill="#111825">Error</text>
+  <text x="1280" y="906" font-family="JetBrains Mono" font-size="13" fill="#5d646e">#c9302d</text>
+  <text x="1280" y="926" font-family="IBM Plex Sans" font-size="13" fill="#5d646e">Errors only</text>
+  <rect x="80" y="952" width="176" height="88" rx="6" fill="#f8fbfe" stroke="#dadee4"/>
+  <text x="80" y="1068" font-family="IBM Plex Sans" font-weight="500" font-size="15" fill="#111825">Paper</text>
+  <text x="80" y="1090" font-family="JetBrains Mono" font-size="13" fill="#5d646e">#f8fbfe</text>
+  <text x="80" y="1110" font-family="IBM Plex Sans" font-size="13" fill="#5d646e">Background</text>
+  <rect x="280" y="952" width="176" height="88" rx="6" fill="#eff3f8" stroke="#dadee4"/>
+  <text x="280" y="1068" font-family="IBM Plex Sans" font-weight="500" font-size="15" fill="#111825">Paper 2</text>
+  <text x="280" y="1090" font-family="JetBrains Mono" font-size="13" fill="#5d646e">#eff3f8</text>
+  <text x="280" y="1110" font-family="IBM Plex Sans" font-size="13" fill="#5d646e">Sidebar, table heads</text>
+  <rect x="480" y="952" width="176" height="88" rx="6" fill="#e3e8ef" stroke="#dadee4"/>
+  <text x="480" y="1068" font-family="IBM Plex Sans" font-weight="500" font-size="15" fill="#111825">Paper 3</text>
+  <text x="480" y="1090" font-family="JetBrains Mono" font-size="13" fill="#5d646e">#e3e8ef</text>
+  <text x="480" y="1110" font-family="IBM Plex Sans" font-size="13" fill="#5d646e">Trays, hover</text>
+  <rect x="680" y="952" width="176" height="88" rx="6" fill="#dadee4"/>
+  <text x="680" y="1068" font-family="IBM Plex Sans" font-weight="500" font-size="15" fill="#111825">Rule</text>
+  <text x="680" y="1090" font-family="JetBrains Mono" font-size="13" fill="#5d646e">#dadee4</text>
+  <text x="680" y="1110" font-family="IBM Plex Sans" font-size="13" fill="#5d646e">Hairlines</text>
+  <rect x="880" y="952" width="176" height="88" rx="6" fill="#111825"/>
+  <text x="880" y="1068" font-family="IBM Plex Sans" font-weight="500" font-size="15" fill="#111825">Ink</text>
+  <text x="880" y="1090" font-family="JetBrains Mono" font-size="13" fill="#5d646e">#111825</text>
+  <text x="880" y="1110" font-family="IBM Plex Sans" font-size="13" fill="#5d646e">Text</text>
+  <rect x="1080" y="952" width="176" height="88" rx="6" fill="#363e49"/>
+  <text x="1080" y="1068" font-family="IBM Plex Sans" font-weight="500" font-size="15" fill="#111825">Ink 2</text>
+  <text x="1080" y="1090" font-family="JetBrains Mono" font-size="13" fill="#5d646e">#363e49</text>
+  <text x="1080" y="1110" font-family="IBM Plex Sans" font-size="13" fill="#5d646e">Labels</text>
+  <rect x="1280" y="952" width="176" height="88" rx="6" fill="#5d646e"/>
+  <text x="1280" y="1068" font-family="IBM Plex Sans" font-weight="500" font-size="15" fill="#111825">Muted</text>
+  <text x="1280" y="1090" font-family="JetBrains Mono" font-size="13" fill="#5d646e">#5d646e</text>
+  <text x="1280" y="1110" font-family="IBM Plex Sans" font-size="13" fill="#5d646e">Secondary text</text>
+  <rect x="80" y="1152" width="1440" height="1" fill="#dadee4"/>
+  <text x="80" y="1212" font-family="Familjen Grotesk" font-weight="500" font-size="17" fill="#363e49">Type</text>
+  <text x="80" y="1270" font-family="Familjen Grotesk" font-weight="600" font-size="40" letter-spacing="-1.1" fill="#111825">Rows that stay put</text>
+  <text x="80" y="1306" font-family="IBM Plex Sans" font-size="14" fill="#5d646e">Familjen Grotesk 600 and 500, heads and labels</text>
+  <text x="600" y="1262" font-family="IBM Plex Sans" font-size="22" fill="#111825">Browse tables, edit rows, run SQL.</text>
+  <text x="600" y="1306" font-family="IBM Plex Sans" font-size="14" fill="#5d646e">IBM Plex Sans 400 and 500, the interface</text>
+  <text x="1080" y="1262" font-family="JetBrains Mono" font-size="19" fill="#111825"><tspan fill="#0462d3">select</tspan> * <tspan fill="#0462d3">from</tspan> orders;</text>
+  <text x="1080" y="1306" font-family="IBM Plex Sans" font-size="14" fill="#5d646e">JetBrains Mono, SQL and values</text>
+</svg>

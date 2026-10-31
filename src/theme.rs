@@ -594,6 +594,78 @@ pub fn window_icon(theme: &Theme, _: svg::Status) -> svg::Style {
     }
 }
 
+/// A key that stays pressed in while its panel is open.
+pub fn key_toggle(on: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let c = colors(theme);
+        if on {
+            button::Style {
+                background: Some(c.accent_wash.into()),
+                text_color: c.on_wash,
+                border: hair(c.accent2, RADIUS_INPUT),
+                shadow: Shadow::default(),
+                snap: true,
+            }
+        } else {
+            key(theme, status)
+        }
+    }
+}
+
+/// The strip of query tabs above the SQL editor.
+pub fn query_strip(theme: &Theme) -> container::Style {
+    fill(colors(theme).paper2)
+}
+
+/// A query tab; the open one takes the editor's graphite and joins it.
+pub fn query_tab(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let c = colors(theme);
+        let (background, text_color) = if active {
+            (c.graphite, c.graphite_ink)
+        } else {
+            match status {
+                button::Status::Hovered | button::Status::Pressed => (c.paper3, c.ink),
+                _ => (Color::TRANSPARENT, c.muted),
+            }
+        };
+        button::Style {
+            background: Some(background.into()),
+            text_color,
+            border: Border {
+                radius: Radius::default().top(RADIUS_INPUT),
+                ..Border::default()
+            },
+            shadow: Shadow::default(),
+            snap: true,
+        }
+    }
+}
+
+/// The small close mark inside a query tab.
+pub fn query_tab_close(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let c = colors(theme);
+        let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        button::Style {
+            background: hovered.then(|| if active { c.graphite_select } else { c.rule }.into()),
+            text_color: c.muted,
+            border: border::rounded(4),
+            shadow: Shadow::default(),
+            snap: true,
+        }
+    }
+}
+
+pub fn query_tab_icon(active: bool) -> impl Fn(&Theme, svg::Status) -> svg::Style {
+    move |theme, _| {
+        let c = colors(theme);
+        svg::Style {
+            color: Some(if active { c.graphite_muted } else { c.muted }),
+        }
+    }
+}
+
 // ---------- inputs ----------
 
 /// Fields keep a constant 1px border; focus turns it cobalt.

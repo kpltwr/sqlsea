@@ -55,23 +55,29 @@ cargo build --release && packaging/linux/install.sh     # --remove undoes it
 
 - **Data**: the open table, 200 rows a page, paged by primary key. Click a column head to sort (ascending, descending, off). Click a row to edit it in the side panel. Changed fields turn blue; Save writes only those. NULL toggles a nullable field. Add row inserts; columns left empty take their defaults.
 - **Structure**: columns, types, nullability, defaults and the primary key.
-- **Query**: write SQL and press Ctrl+Enter (Cmd+Enter on macOS), or Run. If text is selected, only the selection runs. Several statements can run at once; the last result set is shown, up to 5,000 rows.
+- **Query**: write SQL and press Ctrl+Enter (Cmd+Enter on macOS), or Run. If text is selected, only the selection runs. Several statements can run at once; the last result set is shown, up to 5,000 rows. Open more query tabs with New; each keeps its own SQL and result. A running query shows its time and can be stopped with Cancel or Esc.
+- **History**: every query you run is kept per connection, newest first, with how long it took and what it returned. Filter it, and click one to load it back into the editor.
+- **Export**: save a query's result, or a whole table from the Data tab, as CSV or JSON (pick the type in the save dialog). Ctrl+C copies the selected row as tab-separated values, ready to paste into a spreadsheet.
 
 Rows can only be edited in tables with a primary key, and never in views.
+
+Each connection can set a query time limit in seconds; a query from the Query tab that runs longer is cancelled on the server.
 
 Light and dark themes are in the top bar. Auto follows your desktop's setting and switches when it does; your choice is remembered.
 
 | Keys | |
 | --- | --- |
 | Ctrl+Enter | Run the query (Cmd on macOS, as for all of these) |
+| Ctrl+T, Ctrl+W | New query tab, close query tab |
+| Ctrl+C | Copy the selected row |
 | Ctrl+R | Reload the schema and the open table |
 | Ctrl+1, 2, 3 | Data, Structure, Query |
-| Esc | Close the row panel |
+| Esc | Cancel the running query, or close the row panel |
 | Tab, Shift+Tab | Move between fields |
 
 ## Saved connections
 
-Connection details are saved in `connections.json` in sqlsea's config folder: `~/.config/sqlsea` on Linux, `~/Library/Application Support/sqlsea` on macOS, `%APPDATA%\sqlsea` on Windows. On Linux and macOS the file is readable only by you.
+Connection details are saved in `connections.json` in sqlsea's config folder: `~/.config/sqlsea` on Linux, `~/Library/Application Support/sqlsea` on macOS, `%APPDATA%\sqlsea` on Windows. Query history is beside it, in `history/`, one file per connection, and goes when you delete the connection. On Linux and macOS these files are readable only by you.
 
 **Passwords are never written to that file.** They go into the system keyring, where they are encrypted and unlocked by your login: the Secret Service on Linux (GNOME Keyring, KWallet), the Keychain on macOS, and Credential Manager on Windows. A file from an older sqlsea that still holds passwords is moved into the keyring on first launch. If no keyring is available, sqlsea says so and asks for the password each time instead of saving it.
 
@@ -99,7 +105,7 @@ ICED_BACKEND=tiny-skia SQLSEA_SCRIPT="table:users;row:2;shot:/tmp/a.png;quit" \
   cargo run --features shot -- ~/data/app.db
 ```
 
-Steps run one every 1.2 seconds: `table:<name>`, `tab:data|structure|query`, `row:<n>`, `add`, `edit:<field>=<value>`, `save`, `delete`, `sql:<text>`, `run`, `pick:<n>` (a saved connection), `forget` (delete it), `mode:auto|light|dark`, `shot:<path.png>`, `quit`.
+Steps run one every 1.2 seconds: `table:<name>`, `tab:data|structure|query`, `row:<n>`, `add`, `edit:<field>=<value>`, `save`, `delete`, `sql:<text>`, `run`, `pick:<n>` (a saved connection), `forget` (delete it), `mode:auto|light|dark`, `newtab`, `closetab:<id>`, `cancel`, `history`, `usehist:<n>`, `copy`, `shot:<path.png>`, `quit`.
 
 ## Brand
 

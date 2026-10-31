@@ -159,3 +159,110 @@ pub fn delete_password(id: &str) -> Result<(), String> {
         Err(e) => Err(e.to_string()),
     }
 }
+
+// ---------- query history ----------
+
+/// Runs kept per connection; the oldest fall off.
+const HISTORY_LIMIT: usize = 500;
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HistoryEntry {
+    pub sql: String,
+    /// Seconds since the Unix epoch.
+    pub at: u64,
+    pub ok: bool,
+    /// Rows returned, or rows changed by a statement without a result.
+    pub rows: Option<u64>,
+    pub millis: u64,
+}
+
+fn history_path(id: &str) -> Option<PathBuf> {
+    // Ids are generated hex, but never let one name a path outside the folder.
+    let safe: String = id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect();
+    Some(dir()?.join("history").join(format!("{safe}.json")))
+}
+
+/// A connection's past queries, newest first.
+pub fn load_history(id: &str) -> Vec<HistoryEntry> {
+    history_path(id)
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+/// Adds a run to the front of the history. Running the same SQL again moves
+/// it to the front instead of repeating it.
+pub fn record(history: &mut Vec<HistoryEntry>, entry: HistoryEntry) {
+    history.retain(|e| e.sql.trim() != entry.sql.trim());
+    history.insert(0, entry);
+    history.truncate(HISTORY_LIMIT);
+}
+
+/// History can hold sensitive SQL, so like the connections file it is owner-only.
+pub fn save_history(id: &str, history: &[HistoryEntry]) -> Result<(), String> {
+    let path = history_path(id).ok_or("No config directory on this system.")?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_vec(history).map_err(|e| e.to_string())?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| e.to_string())?;
+    }
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+}
+
+pub fn delete_history(id: &str) {
+    if let Some(path) = history_path(id) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+pub fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(sql: &str) -> HistoryEntry {
+        HistoryEntry {
+            sql: sql.into(),
+            at: 1,
+            ok: true,
+            rows: Some(1),
+            millis: 2,
+        }
+    }
+
+    #[test]
+    fn history_moves_repeats_to_the_front_and_stays_bounded() {
+        let mut h = Vec::new();
+        record(&mut h, entry("select 1"));
+        record(&mut h, entry("select 2"));
+        record(&mut h, entry(" select 1 "));
+        assert_eq!(h.len(), 2);
+        assert_eq!(h[0].sql, " select 1 ");
+        for i in 0..HISTORY_LIMIT + 10 {
+            record(&mut h, entry(&format!("select {i}")));
+        }
+        assert_eq!(h.len(), HISTORY_LIMIT);
+    }
+
+    #[test]
+    fn history_ids_cannot_escape_the_folder() {
+        let path = history_path("../../etc/passwd").unwrap();
+        assert!(path.file_name().unwrap().to_str().unwrap() == "etcpasswd.json");
+    }
+}

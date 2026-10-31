@@ -90,9 +90,26 @@ pub struct Config {
     pub database: String,
     #[serde(default)]
     pub path: String,
+    /// Seconds a query from the Query tab may run before it is cancelled;
+    /// empty for no limit.
+    #[serde(default)]
+    pub timeout: String,
 }
 
 impl Config {
+    /// The query time limit, if one is set. Errors when the field is not a
+    /// positive whole number of seconds.
+    pub fn timeout_secs(&self) -> Result<Option<u64>, String> {
+        let t = self.timeout.trim();
+        if t.is_empty() {
+            return Ok(None);
+        }
+        match t.parse::<u64>() {
+            Ok(n) if n > 0 => Ok(Some(n)),
+            _ => Err("The query time limit must be a whole number of seconds.".into()),
+        }
+    }
+
     /// Where this connection points, without the password.
     pub fn target(&self) -> String {
         match self.kind {
@@ -119,7 +136,13 @@ fn or<'a>(value: &'a str, fallback: &'a str) -> &'a str {
 #[derive(Clone)]
 pub enum Db {
     Postgres(Arc<tokio_postgres::Client>),
-    Sqlite(Arc<Mutex<rusqlite::Connection>>),
+    Sqlite(Arc<Sqlite>),
+}
+
+pub struct Sqlite {
+    conn: Mutex<rusqlite::Connection>,
+    /// Stops a running statement from another thread.
+    interrupt: rusqlite::InterruptHandle,
 }
 
 impl fmt::Debug for Db {
@@ -260,8 +283,12 @@ pub async fn connect(config: Config) -> Result<Connected, String> {
                 // Opening never fails on a bad file; reading the schema does.
                 conn.query_row("select count(*) from sqlite_master", [], |_| Ok(()))
                     .map_err(|e| e.to_string())?;
+                let interrupt = conn.get_interrupt_handle();
                 Ok(Connected {
-                    db: Db::Sqlite(Arc::new(Mutex::new(conn))),
+                    db: Db::Sqlite(Arc::new(Sqlite {
+                        conn: Mutex::new(conn),
+                        interrupt,
+                    })),
                     encrypted: None,
                 })
             })
@@ -393,8 +420,59 @@ pub async fn page(
 }
 
 /// Run any SQL. Several statements may be given; the last one that returns
-/// rows is the result.
+/// rows is the result, up to `MAX_ROWS` of it.
 pub async fn execute(db: Db, sql: String) -> Result<ResultSet, String> {
+    execute_capped(db, sql, MAX_ROWS).await
+}
+
+/// Like `execute`, but keeps every row. For exports.
+pub async fn execute_all(db: Db, sql: String) -> Result<ResultSet, String> {
+    execute_capped(db, sql, usize::MAX).await
+}
+
+/// Like `execute`, cancelling the query if it outlasts the connection's time limit.
+pub async fn execute_limited(db: Db, config: Config, sql: String) -> Result<ResultSet, String> {
+    let Some(secs) = config.timeout_secs()? else {
+        return execute(db, sql).await;
+    };
+    match tokio::time::timeout(Duration::from_secs(secs), execute(db.clone(), sql)).await {
+        Ok(result) => result,
+        Err(_) => {
+            cancel(db, config).await?;
+            Err(format!(
+                "The query ran past the {secs} s time limit, so it was cancelled."
+            ))
+        }
+    }
+}
+
+/// Stops whatever query is running on the connection.
+pub async fn cancel(db: Db, config: Config) -> Result<(), String> {
+    match db {
+        Db::Postgres(client) => {
+            let token = client.cancel_token();
+            if config.tls == Tls::Off {
+                token.cancel_query(tokio_postgres::NoTls).await
+            } else {
+                token
+                    .cancel_query(crate::tls::connector(config.tls, &config.ca_file)?)
+                    .await
+            }
+            .map_err(pg_error)
+        }
+        Db::Sqlite(sqlite) => {
+            sqlite.interrupt.interrupt();
+            Ok(())
+        }
+    }
+}
+
+/// Whether an error is the database reporting a cancelled query.
+pub fn is_cancelled(error: &str) -> bool {
+    error.contains("canceling statement due to user request") || error == "interrupted"
+}
+
+async fn execute_capped(db: Db, sql: String, cap: usize) -> Result<ResultSet, String> {
     let started = Instant::now();
     let mut rs = match db {
         Db::Postgres(client) => {
@@ -411,7 +489,7 @@ pub async fn execute(db: Db, sql: String) -> Result<ResultSet, String> {
                         fresh = false;
                     }
                     tokio_postgres::SimpleQueryMessage::Row(row) => {
-                        if rs.rows.len() < MAX_ROWS {
+                        if rs.rows.len() < cap {
                             rs.rows.push(
                                 (0..row.len())
                                     .map(|i| row.get(i).map(str::to_string))
@@ -432,13 +510,17 @@ pub async fn execute(db: Db, sql: String) -> Result<ResultSet, String> {
             }
             rs
         }
-        Db::Sqlite(conn) => blocking(move || sqlite_execute(&conn, &sql)).await?,
+        Db::Sqlite(sqlite) => blocking(move || sqlite_execute(&sqlite.conn, &sql, cap)).await?,
     };
     rs.elapsed = started.elapsed();
     Ok(rs)
 }
 
-fn sqlite_execute(conn: &Mutex<rusqlite::Connection>, sql: &str) -> Result<ResultSet, String> {
+fn sqlite_execute(
+    conn: &Mutex<rusqlite::Connection>,
+    sql: &str,
+    cap: usize,
+) -> Result<ResultSet, String> {
     use rusqlite::fallible_iterator::FallibleIterator;
     use rusqlite::types::ValueRef;
 
@@ -461,7 +543,7 @@ fn sqlite_execute(conn: &Mutex<rusqlite::Connection>, sql: &str) -> Result<Resul
         };
         let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
         while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-            if rs.rows.len() >= MAX_ROWS {
+            if rs.rows.len() >= cap {
                 rs.dropped += 1;
                 continue;
             }
@@ -666,6 +748,49 @@ mod tests {
         assert!(cols[0].primary_key && !cols[1].primary_key);
     }
 
+    const ENDLESS: &str =
+        "with recursive c(x) as (select 1 union all select x + 1 from c) select count(*) from c";
+
+    fn memory() -> Config {
+        Config {
+            kind: Kind::Sqlite,
+            path: ":memory:".into(),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn sqlite_cancel_stops_a_running_query() {
+        let db = connect(memory()).await.unwrap().db;
+        let running = tokio::spawn(execute(db.clone(), ENDLESS.into()));
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        cancel(db.clone(), memory()).await.unwrap();
+        let error = running.await.unwrap().unwrap_err();
+        assert!(is_cancelled(&error), "{error}");
+        // The connection is usable afterwards.
+        assert_eq!(execute(db, "select 1".into()).await.unwrap().rows.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn time_limit_cancels() {
+        let config = Config {
+            timeout: "1".into(),
+            ..memory()
+        };
+        let db = connect(config.clone()).await.unwrap().db;
+        let started = Instant::now();
+        let error = execute_limited(db, config, ENDLESS.into())
+            .await
+            .unwrap_err();
+        assert!(error.contains("1 s time limit"), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(3));
+        let bad = Config {
+            timeout: "soon".into(),
+            ..memory()
+        };
+        assert!(bad.timeout_secs().is_err());
+    }
+
     /// Needs live servers, so it only runs when asked:
     /// `SQLSEA_TLS_PORT=55433 SQLSEA_TLS_CA=ca.crt SQLSEA_PLAIN_PORT=55432 cargo test -- --ignored`
     #[tokio::test]
@@ -716,10 +841,23 @@ mod tests {
             encrypted(pg(tls.clone(), "127.0.0.1", Tls::Verify, &ca)).await,
             Ok(Some(true))
         );
-        let missing = encrypted(pg(tls, "localhost", Tls::Verify, "/nope.pem"))
+        let missing = encrypted(pg(tls.clone(), "localhost", Tls::Verify, "/nope.pem"))
             .await
             .unwrap_err();
         assert!(missing.contains("Could not read the CA"), "{missing}");
+
+        // A running query can be cancelled, over plain TCP and over verified TLS.
+        for config in [
+            pg(plain.clone(), "localhost", Tls::Off, ""),
+            pg(tls.clone(), "localhost", Tls::Verify, &ca),
+        ] {
+            let db = connect(config.clone()).await.unwrap().db;
+            let running = tokio::spawn(execute(db.clone(), "select pg_sleep(30)".into()));
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            cancel(db, config).await.unwrap();
+            let error = running.await.unwrap().unwrap_err();
+            assert!(is_cancelled(&error), "{error}");
+        }
 
         assert_eq!(
             encrypted(pg(plain.clone(), "localhost", Tls::Prefer, "")).await,

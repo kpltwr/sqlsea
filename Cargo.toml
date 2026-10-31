@@ -15,6 +15,7 @@ dirs-next = "2.0.0"
 iced = { version = "0.14", features = ["tokio", "advanced", "svg"] }
 keyring = "4.2"
 png = "0.18.1"
+rfd = "0.17.2"
 rusqlite = { version = "0.41.1", features = ["bundled"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 rustls-native-certs = "0.8"

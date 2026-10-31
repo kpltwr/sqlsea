@@ -37,6 +37,8 @@ The TLS server's certificate must be signed by that CA and valid for `localhost`
 | `src/tls.rs` | TLS settings for PostgreSQL |
 | `src/store.rs` | Saved connections, settings, keyring |
 | `src/grid.rs` | The result grid |
+| `src/query.rs` | The Query tab: query tabs, running and cancelling, history |
+| `src/export.rs` | CSV, JSON and clipboard output |
 | `src/sql.rs` | SQL syntax highlighting |
 | `src/chrome.rs` | The Linux title bar controls and resize edges |
 | `src/theme.rs` | Every colour, font and size, light and dark |

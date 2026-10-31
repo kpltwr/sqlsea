@@ -122,4 +122,4 @@ pub fn frame<'a, M: Clone + 'a>(
 
 const MINIMIZE: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M4 8.5h8" stroke="black" stroke-width="1.3" stroke-linecap="round"/></svg>"#;
 const MAXIMIZE: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect x="4.5" y="4.5" width="7" height="7" rx="1" fill="none" stroke="black" stroke-width="1.3"/></svg>"#;
-const CLOSE: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M5 5l6 6M11 5l-6 6" stroke="black" stroke-width="1.3" stroke-linecap="round"/></svg>"#;
+pub const CLOSE: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M5 5l6 6M11 5l-6 6" stroke="black" stroke-width="1.3" stroke-linecap="round"/></svg>"#;

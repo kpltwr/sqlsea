@@ -3,7 +3,9 @@
 
 mod chrome;
 mod db;
+mod export;
 mod grid;
+mod query;
 mod sql;
 mod store;
 mod theme;
@@ -126,9 +128,7 @@ struct Session {
     inspector: Option<Inspector>,
     /// Bumped on every table switch or reload so late answers are dropped.
     generation: u64,
-    editor: text_editor::Content,
-    query: Load<ResultSet>,
-    query_selected: Option<usize>,
+    queries: query::Queries,
     status: Option<Notice>,
 }
 
@@ -224,6 +224,7 @@ enum Message {
     FormDatabase(String),
     FormTls(Tls),
     FormCaFile(String),
+    FormTimeout(String),
     FormPath(String),
     Test,
     Tested(Result<Option<bool>, String>),
@@ -260,8 +261,24 @@ enum Message {
     #[cfg(feature = "shot")]
     SetSql(String),
     Run,
-    QueryDone(u64, Result<ResultSet, String>),
+    /// Query tab id, run number, result.
+    QueryDone(u64, u64, Result<ResultSet, String>),
     SelectQueryRow(usize),
+    Cancel,
+    Cancelled(Result<(), String>),
+    NewQuery,
+    CloseQuery(u64),
+    SelectQuery(u64),
+    ToggleHistory,
+    HistoryFilter(String),
+    UseHistory(usize),
+    /// Redraws the elapsed time of running queries.
+    Tick,
+    ExportQuery,
+    ExportTable,
+    /// The file written and its row count, or nothing when the dialog was closed.
+    Exported(Result<Option<(String, usize)>, String>),
+    CopyRow,
     GridScrolled(&'static str, f32),
     Key(keyboard::Event),
     SetAppearance(Appearance),
@@ -316,9 +333,18 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Message> {
+        let running = self
+            .session
+            .as_ref()
+            .is_some_and(|s| s.queries.any_running());
         Subscription::batch([
             keyboard::listen().map(Message::Key),
             iced::system::theme_changes().map(Message::SystemTheme),
+            if running {
+                iced::time::every(std::time::Duration::from_millis(100)).map(|_| Message::Tick)
+            } else {
+                Subscription::none()
+            },
         ])
     }
 
@@ -351,6 +377,7 @@ impl App {
             Message::FormDatabase(v) => self.form.database = v,
             Message::FormTls(v) => self.form.tls = v,
             Message::FormCaFile(v) => self.form.ca_file = v,
+            Message::FormTimeout(v) => self.form.timeout = v,
             Message::FormPath(v) => self.form.path = v,
             Message::Test => {
                 self.busy = true;
@@ -384,6 +411,11 @@ impl App {
                     config.id = store::new_id();
                 }
                 self.form = config.clone();
+                if let Err(e) = config.timeout_secs() {
+                    self.busy = false;
+                    self.notice = Some(Notice::Error(e));
+                    return Task::none();
+                }
                 return connect(config);
             }
             Message::Connected(config, result) => {
@@ -402,6 +434,7 @@ impl App {
             Message::DeleteSaved => {
                 if let Some(i) = self.editing.take() {
                     let gone = self.saved.remove(i);
+                    store::delete_history(&gone.id);
                     self.form = Config::default();
                     self.notice = store::save(&self.saved)
                         .and_then(|()| store::delete_password(&gone.id))
@@ -587,10 +620,20 @@ impl App {
                     ]
                     .spacing(12),
                 )
-                .push(labelled(
-                    "Database",
-                    input("Same as the user", &f.database, Message::FormDatabase),
-                ))
+                .push(
+                    row![
+                        labelled(
+                            "Database",
+                            input("Same as the user", &f.database, Message::FormDatabase),
+                        ),
+                        container(labelled(
+                            "Time limit, s",
+                            input("None", &f.timeout, Message::FormTimeout)
+                        ))
+                        .width(110),
+                    ]
+                    .spacing(12),
+                )
                 .push(labelled(
                     "Encryption",
                     column![
@@ -625,10 +668,20 @@ impl App {
                         .font(theme::MONO),
                     )
                 })),
-            Kind::Sqlite => fields.push(labelled(
-                "Database file",
-                input("~/data/app.db", &f.path, Message::FormPath).font(theme::MONO),
-            )),
+            Kind::Sqlite => fields.push(
+                row![
+                    labelled(
+                        "Database file",
+                        input("~/data/app.db", &f.path, Message::FormPath).font(theme::MONO),
+                    ),
+                    container(labelled(
+                        "Time limit, s",
+                        input("None", &f.timeout, Message::FormTimeout)
+                    ))
+                    .width(110),
+                ]
+                .spacing(12),
+            ),
         };
 
         let note: Element<_> = match &self.notice {
@@ -692,6 +745,7 @@ impl App {
 
 impl Session {
     fn new(config: Config, connected: db::Connected) -> Self {
+        let history = store::load_history(&config.id);
         Session {
             config,
             db: connected.db,
@@ -707,9 +761,7 @@ impl Session {
             selected: None,
             inspector: None,
             generation: 0,
-            editor: text_editor::Content::new(),
-            query: Load::Idle,
-            query_selected: None,
+            queries: query::Queries::new(history),
             status: None,
         }
     }
@@ -744,18 +796,24 @@ impl Session {
         })
     }
 
-    fn load_page(&mut self) -> Task<Message> {
-        let (Some(table), Some(columns)) = (self.current.clone(), self.columns.ready()) else {
-            return Task::none();
-        };
-        // Page by the primary key unless a column head chose otherwise, so rows stay put.
-        let order = match self.sort {
+    /// Rows come in primary-key order unless a column head chose otherwise,
+    /// so pages stay put.
+    fn order(&self) -> Option<(String, bool)> {
+        let columns = self.columns.ready()?;
+        match self.sort {
             Some((i, asc)) => columns.get(i).map(|c| (c.name.clone(), asc)),
             None => columns
                 .iter()
                 .find(|c| c.primary_key)
                 .map(|c| (c.name.clone(), true)),
+        }
+    }
+
+    fn load_page(&mut self) -> Task<Message> {
+        let (Some(table), Some(_)) = (self.current.clone(), self.columns.ready()) else {
+            return Task::none();
         };
+        let order = self.order();
         self.generation += 1;
         let generation = self.generation;
         self.page = Load::Loading;
@@ -965,31 +1023,126 @@ impl Session {
                     }
                 }
             },
-            Message::Edit(action) => self.editor.perform(action),
+            Message::Edit(action) => self.queries.active_mut().editor.perform(action),
             #[cfg(feature = "shot")]
-            Message::SetSql(sql) => {
-                self.editor.perform(text_editor::Action::SelectAll);
-                self.editor
-                    .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
-                        std::sync::Arc::new(sql),
-                    )));
-            }
+            Message::SetSql(sql) => self.queries.active_mut().set_sql(sql),
             Message::Run => return self.run(),
-            Message::QueryDone(generation, result) => {
-                if generation != self.generation {
-                    return Task::none();
-                }
+            Message::QueryDone(tab, run, result) => {
                 let changed_schema = matches!(&result, Ok(rs) if rs.columns.is_empty());
-                self.query = match result {
-                    Ok(rs) => Load::Ready(rs),
-                    Err(e) => Load::Failed(e),
+                let Some(entry) = self
+                    .queries
+                    .find_mut(tab)
+                    .and_then(|t| t.finish(run, result))
+                else {
+                    return Task::none();
                 };
+                store::record(&mut self.queries.history, entry);
+                if let Err(e) = store::save_history(&self.config.id, &self.queries.history) {
+                    self.status = Some(Notice::Error(format!("Could not save the history: {e}")));
+                }
                 // A statement without a result set may have created or dropped a table.
                 if changed_schema {
                     return self.load_tables();
                 }
             }
-            Message::SelectQueryRow(r) => self.query_selected = Some(r),
+            Message::SelectQueryRow(r) => self.queries.active_mut().selected = Some(r),
+            Message::Cancel => {
+                let tab = self.queries.active_mut();
+                if tab.running() && !tab.cancelling {
+                    tab.cancelling = true;
+                    return Task::perform(
+                        db::cancel(self.db.clone(), self.config.clone()),
+                        Message::Cancelled,
+                    );
+                }
+            }
+            Message::Cancelled(Err(e)) => {
+                self.queries.active_mut().cancelling = false;
+                self.status = Some(Notice::Error(format!("Could not cancel the query: {e}")));
+            }
+            Message::NewQuery => {
+                self.queries.add();
+                self.tab = Tab::Query;
+                return operation::focus("sql");
+            }
+            Message::CloseQuery(id) => self.queries.close(id),
+            Message::SelectQuery(id) => {
+                self.queries.select(id);
+                return operation::focus("sql");
+            }
+            Message::ToggleHistory => self.queries.show_history = !self.queries.show_history,
+            Message::HistoryFilter(f) => self.queries.history_filter = f,
+            Message::UseHistory(i) => {
+                if let Some(entry) = self.queries.history.get(i) {
+                    let sql = entry.sql.clone();
+                    self.queries.active_mut().set_sql(sql);
+                    return operation::focus("sql");
+                }
+            }
+            Message::ExportQuery => {
+                if let Load::Ready(rs) = &self.queries.active().result {
+                    let rs = rs.clone();
+                    let name = format!("query-{}", self.queries.active().id);
+                    return export(name, async move { Ok(rs) });
+                }
+            }
+            Message::ExportTable => {
+                if let Some(table) = self.current.clone() {
+                    let order = self.order();
+                    let sql = format!(
+                        "select * from {}{}",
+                        table.qualified(),
+                        order
+                            .map(|(c, asc)| format!(
+                                " order by {} {}",
+                                db::ident(&c),
+                                if asc { "asc" } else { "desc" }
+                            ))
+                            .unwrap_or_default()
+                    );
+                    return export(table.name.clone(), db::execute_all(self.db.clone(), sql));
+                }
+            }
+            Message::Exported(result) => match result {
+                Ok(Some((path, rows))) => {
+                    self.status = Some(Notice::Ok(format!(
+                        "Saved {} to {path}.",
+                        count(rows as u64, "row")
+                    )));
+                }
+                Ok(None) => {}
+                Err(e) => self.status = Some(Notice::Error(format!("Export failed: {e}"))),
+            },
+            Message::CopyRow => {
+                let row = match self.tab {
+                    Tab::Data => self
+                        .page
+                        .ready()
+                        .zip(self.selected)
+                        .and_then(|(p, r)| p.result.rows.get(r).map(|row| (r, row.clone()))),
+                    Tab::Query => match &self.queries.active().result {
+                        Load::Ready(rs) => self
+                            .queries
+                            .active()
+                            .selected
+                            .and_then(|r| rs.rows.get(r).map(|row| (r, row.clone()))),
+                        _ => None,
+                    },
+                    Tab::Structure => None,
+                };
+                if let Some((r, row)) = row {
+                    let n = if self.tab == Tab::Data {
+                        self.offset + r as u64 + 1
+                    } else {
+                        r as u64 + 1
+                    };
+                    self.status = Some(Notice::Ok(format!(
+                        "Copied row {} as tab-separated values.",
+                        thousands(n)
+                    )));
+                    return iced::clipboard::write(export::tsv_row(&row));
+                }
+            }
             _ => {}
         }
         Task::none()
@@ -1056,22 +1209,23 @@ impl Session {
     }
 
     fn run(&mut self) -> Task<Message> {
-        let sql = self
-            .editor
-            .selection()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| self.editor.text());
-        if sql.trim().is_empty() {
+        let tab = self.queries.active_mut();
+        let sql = tab.sql_to_run();
+        if sql.trim().is_empty() || tab.running() {
             return Task::none();
         }
+        tab.run += 1;
+        tab.sql = sql.clone();
+        tab.started = Some(std::time::Instant::now());
+        tab.cancelling = false;
+        tab.result = Load::Loading;
+        tab.selected = None;
+        let (id, run) = (tab.id, tab.run);
         self.tab = Tab::Query;
-        self.generation += 1;
-        let generation = self.generation;
-        self.query = Load::Loading;
-        self.query_selected = None;
-        Task::perform(db::execute(self.db.clone(), sql), move |r| {
-            Message::QueryDone(generation, r)
-        })
+        Task::perform(
+            db::execute_limited(self.db.clone(), self.config.clone(), sql),
+            move |r| Message::QueryDone(id, run, r),
+        )
     }
 
     fn on_key(&mut self, key: Key, modifiers: keyboard::Modifiers) -> Task<Message> {
@@ -1079,7 +1233,16 @@ impl Session {
             Key::Named(Named::Escape) if self.inspector.is_some() => {
                 self.update(Message::CloseInspector)
             }
+            Key::Named(Named::Escape) if self.queries.active().running() => {
+                self.update(Message::Cancel)
+            }
             Key::Named(Named::Enter) if modifiers.command() && self.tab == Tab::Query => self.run(),
+            Key::Character("t") if modifiers.command() => self.update(Message::NewQuery),
+            Key::Character("w") if modifiers.command() && self.tab == Tab::Query => {
+                let id = self.queries.active().id;
+                self.update(Message::CloseQuery(id))
+            }
+            Key::Character("c") if modifiers.command() => self.update(Message::CopyRow),
             Key::Character("r") if modifiers.command() => self.update(Message::Refresh),
             Key::Character("1") if modifiers.command() => {
                 self.update(Message::SwitchTab(Tab::Data))
@@ -1253,13 +1416,7 @@ impl Session {
         let tools: Element<_> = match self.tab {
             Tab::Data => self.data_tools(),
             Tab::Structure => space().into(),
-            Tab::Query => row![
-                muted(format!("{RUN_KEY}+Enter")),
-                small_key("Run", theme::key_primary, Some(Message::Run)),
-            ]
-            .spacing(12)
-            .align_y(Center)
-            .into(),
+            Tab::Query => self.queries.tools(),
         };
 
         let strip = container(
@@ -1279,7 +1436,7 @@ impl Session {
         let content = match self.tab {
             Tab::Data => self.data_view(),
             Tab::Structure => self.structure_view(),
-            Tab::Query => self.query_view(),
+            Tab::Query => self.queries.view(),
         };
 
         column![strip, hrule(), content].into()
@@ -1314,6 +1471,7 @@ impl Session {
                 (self.offset + shown < page.total).then_some(Message::NextPage)
             ),
             small_key("Add row", theme::key, can_add.then_some(Message::AddRow)),
+            small_key("Export", theme::key, Some(Message::ExportTable)),
         ]
         .spacing(8)
         .align_y(Center)
@@ -1360,78 +1518,6 @@ impl Session {
                 on_scroll: Message::GridScrolled,
             }),
         }
-    }
-
-    fn query_view(&self) -> Element<'_, Message> {
-        let editor = text_editor(&self.editor)
-            .id("sql")
-            .placeholder("select * from …")
-            .on_action(Message::Edit)
-            .font(theme::MONO)
-            .size(theme::TEXT_MD)
-            .padding(16)
-            .height(Fill)
-            .highlight_with::<sql::Sql>((), sql::format)
-            .key_binding(|press| {
-                if matches!(press.key.as_ref(), Key::Named(Named::Enter))
-                    && press.modifiers.command()
-                {
-                    return Some(text_editor::Binding::Custom(Message::Run));
-                }
-                if matches!(press.key.as_ref(), Key::Named(Named::Tab)) && !press.modifiers.shift()
-                {
-                    return Some(text_editor::Binding::Sequence(vec![
-                        text_editor::Binding::Insert(' '),
-                        text_editor::Binding::Insert(' '),
-                    ]));
-                }
-                text_editor::Binding::from_key_press(press)
-            })
-            .style(theme::sql_editor);
-
-        let results: Element<_> = match &self.query {
-            Load::Idle => empty_state(
-                format!(
-                    "Results show here. Write SQL above and press {RUN_KEY}+Enter; \
-                     a selection runs on its own."
-                ),
-                None,
-            ),
-            Load::Loading => grid::skeleton(),
-            Load::Failed(e) => container(error_note(e)).padding(16).width(Fill).into(),
-            Load::Ready(rs) if rs.columns.is_empty() => {
-                let mut note = column![
-                    text(match rs.affected {
-                        Some(n) => format!("{} affected", count(n, "row")),
-                        None => "The statement ran.".to_string(),
-                    })
-                    .font(theme::DISPLAY)
-                    .size(theme::TEXT_LG)
-                ]
-                .spacing(4);
-                if rs.affected == Some(0) {
-                    note = note.push(muted("Nothing matched the statement's conditions."));
-                }
-                container(note).padding(16).width(Fill).into()
-            }
-            Load::Ready(rs) => grid::view(grid::Grid {
-                result: rs,
-                selected: self.query_selected,
-                on_select: Some(Message::SelectQueryRow),
-                on_sort: None,
-                sort: None,
-                ids: QUERY_GRID,
-                on_scroll: Message::GridScrolled,
-            }),
-        };
-
-        column![
-            container(editor)
-                .height(Length::FillPortion(2))
-                .style(theme::graphite),
-            container(results).height(Length::FillPortion(3)),
-        ]
-        .into()
     }
 
     fn inspector_view<'a>(&'a self, ins: &'a Inspector) -> Element<'a, Message> {
@@ -1601,7 +1687,7 @@ impl Session {
                 Some(c) => vec![count(c.len() as u64, "column")],
                 None => vec![],
             },
-            Tab::Query => match self.query.ready() {
+            Tab::Query => match self.queries.active().result.ready() {
                 Some(rs) if !rs.columns.is_empty() => {
                     let mut v = vec![count(rs.rows.len() as u64, "row")];
                     if rs.dropped > 0 {
@@ -1651,6 +1737,24 @@ fn write(db: Db, sql: String, done: String) -> Task<Message> {
             Err(e) => Err(e),
         })
     })
+}
+
+/// Asks where to save, then writes the rows as CSV or JSON, by the file's extension.
+fn export(
+    name: String,
+    rows: impl std::future::Future<Output = Result<ResultSet, String>> + Send + 'static,
+) -> Task<Message> {
+    Task::perform(
+        async move {
+            let Some(path) = export::choose_file(&name).await else {
+                return Ok(None);
+            };
+            let rs = rows.await?;
+            export::write(&path, &rs)?;
+            Ok(Some((path.display().to_string(), rs.rows.len())))
+        },
+        Message::Exported,
+    )
 }
 
 /// Expand `~/` in file paths and trim stray whitespace.
@@ -1934,6 +2038,12 @@ fn script() -> Task<Message> {
                 _ => Appearance::Auto,
             })),
             "forget" => Some(Message::DeleteSaved),
+            "newtab" => Some(Message::NewQuery),
+            "closetab" => arg.parse().ok().map(Message::CloseQuery),
+            "history" => Some(Message::ToggleHistory),
+            "usehist" => arg.parse().ok().map(Message::UseHistory),
+            "cancel" => Some(Message::Cancel),
+            "copy" => Some(Message::CopyRow),
             "save" => Some(Message::SaveRow),
             "delete" => Some(Message::DeleteRow),
             "edit" => arg

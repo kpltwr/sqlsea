@@ -94,7 +94,7 @@ ICED_BACKEND=tiny-skia SQLSEA_SCRIPT="table:users;row:2;shot:/tmp/a.png;quit" \
   cargo run --features shot -- ~/data/app.db
 ```
 
-Steps run one every 1.2 seconds: `table:<name>`, `tab:data|structure|query`, `row:<n>`, `add`, `edit:<field>=<value>`, `save`, `delete`, `sql:<text>`, `run`, `shot:<path.png>`, `quit`.
+Steps run one every 1.2 seconds: `table:<name>`, `tab:data|structure|query`, `row:<n>`, `add`, `edit:<field>=<value>`, `save`, `delete`, `sql:<text>`, `run`, `pick:<n>` (a saved connection), `forget` (delete it), `mode:auto|light|dark`, `shot:<path.png>`, `quit`.
 
 ## Brand
 

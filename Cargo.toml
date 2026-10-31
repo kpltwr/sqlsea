@@ -2,6 +2,11 @@
 name = "sqlsea"
 version = "0.1.0"
 edition = "2024"
+description = "A small native database client for PostgreSQL and SQLite"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["database", "postgres", "sqlite", "sql", "gui"]
+categories = ["database", "gui"]
 
 [dependencies]
 dirs-next = "2.0.0"

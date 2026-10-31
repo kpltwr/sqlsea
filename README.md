@@ -75,3 +75,20 @@ Logos, icons, colours and type are in [`brand/`](brand/BRAND.md). Rebuild them w
 ## Fonts
 
 IBM Plex Sans, Familjen Grotesk and JetBrains Mono are embedded from `assets/fonts`, each under the SIL Open Font License (licence files beside them).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
+
+The bundled fonts are under the SIL Open Font License; see `assets/fonts`.

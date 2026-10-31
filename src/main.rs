@@ -1,6 +1,7 @@
 // Release builds on Windows open no console window behind the app.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod chrome;
 mod db;
 mod grid;
 mod sql;
@@ -39,9 +40,11 @@ fn main() -> iced::Result {
             size: iced::Size::new(1280.0, 800.0),
             min_size: Some(iced::Size::new(900.0, 560.0)),
             icon: window_icon(),
+            // On Linux the app draws its own title bar; see `chrome`.
+            decorations: !chrome::CUSTOM,
             #[cfg(target_os = "linux")]
             platform_specific: iced::window::settings::PlatformSpecific {
-                // Matches packaging/sqlsea.desktop so launchers show the icon.
+                // Matches packaging/linux/sqlsea.desktop so launchers show the icon.
                 application_id: "sqlsea".into(),
                 ..Default::default()
             },
@@ -262,6 +265,7 @@ enum Message {
     GridScrolled(&'static str, f32),
     Key(keyboard::Event),
     SetAppearance(Appearance),
+    Window(chrome::Action),
     SystemTheme(iced::theme::Mode),
     #[cfg(feature = "shot")]
     Shoot(String),
@@ -416,6 +420,7 @@ impl App {
                     self.notice = Some(Notice::Error(format!("Could not save the setting: {e}")));
                 }
             }
+            Message::Window(action) => return chrome::perform(action),
             Message::SystemTheme(mode) => self.system_dark = mode == iced::theme::Mode::Dark,
             Message::GridScrolled(head, x) => {
                 return operation::scroll_to(
@@ -489,10 +494,11 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        match &self.session {
+        let content = match &self.session {
             Some(session) => session.view(self.appearance),
             None => self.connect_view(),
-        }
+        };
+        chrome::frame(content, Message::Window)
     }
 
     fn connect_view(&self) -> Element<'_, Message> {
@@ -1740,7 +1746,7 @@ fn top_bar<'a>(
     .padding(2)
     .style(theme::tray);
 
-    container(
+    let bar = container(
         row![
             row![
                 svg(ICON.clone()).width(22).height(22),
@@ -1753,15 +1759,19 @@ fn top_bar<'a>(
             modes,
         ]
         .push(right)
+        .push(
+            chrome::controls(Message::Window)
+                .map(|controls| row![vrule_short(), controls].spacing(12).align_y(Center)),
+        )
         .spacing(12)
         .align_y(Center),
     )
-    .padding(Padding::from([0.0, 16.0]))
+    .padding(Padding::from([0.0, 16.0]).right(if chrome::CUSTOM { 10.0 } else { 16.0 }))
     .height(48)
     .center_y(48)
     .width(Fill)
-    .style(theme::bar)
-    .into()
+    .style(theme::bar);
+    chrome::title_bar(bar.into(), Message::Window)
 }
 
 fn hrule<'a>() -> Element<'a, Message> {

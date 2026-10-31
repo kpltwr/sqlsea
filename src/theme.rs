@@ -5,7 +5,7 @@
 
 use iced::border::{self, Radius};
 use iced::font::{Family, Weight};
-use iced::widget::{button, container, scrollable, text, text_editor, text_input};
+use iced::widget::{button, container, scrollable, svg, text, text_editor, text_input};
 use iced::{Background, Border, Color, Font, Shadow, Theme, Vector};
 
 const fn rgb(r: u8, g: u8, b: u8) -> Color {
@@ -319,6 +319,15 @@ pub fn skeleton(theme: &Theme) -> container::Style {
     }
 }
 
+/// A hairline around the whole window, which draws its own frame on Linux.
+pub fn window_frame(theme: &Theme) -> container::Style {
+    let c = colors(theme);
+    container::Style {
+        border: hair(c.rule2, 0.0),
+        ..fill(c.paper)
+    }
+}
+
 // ---------- buttons ----------
 
 /// A keycap: key face on a hard bottom edge that sinks when pressed.
@@ -553,6 +562,35 @@ pub fn null_toggle(on: bool) -> impl Fn(&Theme, button::Status) -> button::Style
             shadow: Shadow::default(),
             snap: true,
         }
+    }
+}
+
+/// Minimize, maximize and close in the title bar: round, quiet, close warms on hover.
+pub fn window_button(close: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let c = colors(theme);
+        let background = match status {
+            button::Status::Hovered | button::Status::Pressed if close => c.error_wash,
+            button::Status::Hovered => c.paper3,
+            button::Status::Pressed => c.rule,
+            _ => Color::TRANSPARENT,
+        };
+        button::Style {
+            background: Some(background.into()),
+            text_color: c.ink2,
+            border: Border {
+                radius: 14.0.into(),
+                ..Border::default()
+            },
+            shadow: Shadow::default(),
+            snap: true,
+        }
+    }
+}
+
+pub fn window_icon(theme: &Theme, _: svg::Status) -> svg::Style {
+    svg::Style {
+        color: Some(colors(theme).ink2),
     }
 }
 

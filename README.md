@@ -11,18 +11,18 @@ Build a package on the platform you want it for; each script writes to `dist/`.
 **Linux**
 
 ```sh
-packaging/package.sh          # dist/sqlsea-<version>-linux-<arch>.tar.gz
+packaging/linux/package.sh    # dist/sqlsea-<version>-linux-<arch>.tar.gz
 ```
 
-Unpack it anywhere and run `./install.sh` inside. That puts sqlsea in `~/.local/bin` and in your app launcher; `./install.sh --remove` takes it out. From the source tree, `cargo build --release && packaging/install.sh` does the same.
+Unpack it anywhere and run `./install.sh` inside. That puts sqlsea in `~/.local/bin` and in your app launcher; `./install.sh --remove` takes it out. From the source tree, `cargo build --release && packaging/linux/install.sh` does the same.
 
 **macOS** (needs Xcode command line tools)
 
 ```sh
-packaging/package.sh          # dist/sqlsea-<version>-macos.dmg, for Apple silicon and Intel
+packaging/macos/package.sh    # dist/sqlsea-<version>-macos.dmg, for Apple silicon and Intel
 ```
 
-Open the disk image and drag sqlsea to Applications. Unless you sign and notarize it (see the top of `packaging/package.sh`), macOS will ask before the first launch on other Macs: open it with right-click, Open.
+Open the disk image and drag sqlsea to Applications. Unless you sign and notarize it (see the top of `packaging/macos/package.sh`), macOS will ask before the first launch on other Macs: open it with right-click, Open.
 
 **Windows** (needs Rust with the MSVC toolchain and the Visual Studio C++ build tools)
 
@@ -43,7 +43,7 @@ cargo run --release -- "My database"    # open a saved connection by name
 The release binary is `target/release/sqlsea`. To put it in your app launcher with its icon:
 
 ```sh
-cargo build --release && packaging/install.sh     # packaging/install.sh --remove undoes it
+cargo build --release && packaging/linux/install.sh     # --remove undoes it
 ```
 
 ## Use

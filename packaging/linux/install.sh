@@ -13,8 +13,8 @@ if [ -f "$here/sqlsea" ]; then
     svg="$here/icons/icon.svg"
     desktop="$here/sqlsea.desktop"
 else
-    # The source tree.
-    root=$(dirname "$here")
+    # The source tree, two levels up from packaging/linux.
+    root=$(cd "$here/../.." && pwd)
     app="$root/target/release/sqlsea"
     png="$root/brand/png/icon-"
     svg="$root/brand/svg/icon.svg"

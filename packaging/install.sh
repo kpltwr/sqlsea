@@ -26,7 +26,12 @@ for s in $SIZES; do
     install -Dm644 "brand/png/icon-$s.png" "$ICONS/${s}x${s}/apps/sqlsea.png"
 done
 install -Dm644 brand/svg/icon.svg "$ICONS/scalable/apps/sqlsea.svg"
-install -Dm644 packaging/sqlsea.desktop "$APPS/sqlsea.desktop"
+# The desktop session's PATH often lacks ~/.local/bin, and launchers hide
+# entries whose program they cannot find, so point at the binary directly.
+mkdir -p "$APPS"
+sed -e "s|^Exec=sqlsea|Exec=$BIN/sqlsea|" -e "s|^TryExec=.*|TryExec=$BIN/sqlsea|" \
+    packaging/sqlsea.desktop > "$APPS/sqlsea.desktop"
+chmod 644 "$APPS/sqlsea.desktop"
 
 command -v update-desktop-database >/dev/null && update-desktop-database -q "$APPS" || true
 command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t "$ICONS" || true

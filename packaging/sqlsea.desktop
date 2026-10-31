@@ -3,6 +3,7 @@ Type=Application
 Name=sqlsea
 GenericName=Database client
 Comment=Browse tables, edit rows and run SQL on PostgreSQL and SQLite
+TryExec=sqlsea
 Exec=sqlsea %f
 Icon=sqlsea
 Terminal=false

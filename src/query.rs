@@ -411,18 +411,15 @@ impl Queries {
     fn strip(&self, width: f32) -> Element<'_, Message> {
         let tabs = Row::with_children(self.tabs.iter().enumerate().map(|(i, tab)| {
             let active = i == self.active;
-            let close = button(
-                container(
-                    text("×")
-                        .font(theme::BODY)
-                        .size(16)
-                        .style(theme::query_tab_mark(active)),
-                )
-                .center(14),
-            )
-            .padding(2)
-            .style(theme::query_tab_close(active))
-            .on_press(Message::CloseQuery(tab.id));
+            let mark = if active {
+                theme::mark_on_graphite
+            } else {
+                theme::mark_muted
+            };
+            let close = button(container(crate::mark::cross(8.0, mark)).center(14))
+                .padding(2)
+                .style(theme::query_tab_close(active))
+                .on_press(Message::CloseQuery(tab.id));
             button(
                 row![
                     text(tab.title())

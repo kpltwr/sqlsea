@@ -62,6 +62,7 @@ SQLSEA_SSH_PORT=2222 SQLSEA_SSH_DIR=path/to/keys cargo test -- --ignored ssh_tun
 | `src/complete.rs` | Suggestions for the SQL editor |
 | `src/guard.rs` | Splits SQL into statements, and finds statements that change all rows |
 | `src/chrome.rs` | The title bar controls and resize edges on Linux |
+| `src/mark.rs` | The close mark, drawn as two lines |
 | `src/theme.rs` | All colors, fonts and sizes, for light and dark |
 | `brand/` | Icons and logos. Read `brand/BRAND.md`. |
 | `packaging/` | Release packages, one folder for each system |

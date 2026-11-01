@@ -9,6 +9,7 @@ mod export;
 mod fit;
 mod grid;
 mod guard;
+mod mark;
 mod query;
 mod sql;
 mod store;

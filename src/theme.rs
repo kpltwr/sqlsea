@@ -691,12 +691,19 @@ pub fn query_tab_close(active: bool) -> impl Fn(&Theme, button::Status) -> butto
     }
 }
 
-/// The close mark in a query tab.
-pub fn query_tab_mark(active: bool) -> impl Fn(&Theme) -> text::Style {
-    move |theme| {
-        let c = colors(theme);
-        tinted(if active { c.graphite_muted } else { c.muted })
-    }
+/// The close mark in the open query tab, on the dark editor color.
+pub fn mark_on_graphite(theme: &Theme) -> Color {
+    colors(theme).graphite_muted
+}
+
+/// The close mark in the other query tabs.
+pub fn mark_muted(theme: &Theme) -> Color {
+    colors(theme).muted
+}
+
+/// The close mark in the title bar.
+pub fn mark_ink2(theme: &Theme) -> Color {
+    colors(theme).ink2
 }
 
 // ---------- inputs ----------

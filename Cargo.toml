@@ -12,7 +12,7 @@ categories = ["database", "gui"]
 
 [dependencies]
 dirs-next = "2.0.0"
-iced = { version = "0.14", features = ["tokio", "advanced", "image-without-codecs"] }
+iced = { version = "0.14", features = ["tokio", "advanced", "image-without-codecs", "canvas"] }
 keyring = "4.2"
 png = "0.18.1"
 rfd = "0.17.2"

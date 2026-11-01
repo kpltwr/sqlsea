@@ -1121,6 +1121,67 @@ pub fn insert_sql(table: &Table, columns: &[Column], values: &[(usize, Option<St
     )
 }
 
+/// Runs row changes in one transaction. Each statement must change exactly
+/// one row. If one fails or changes no row, nothing is saved.
+pub async fn apply(db: Db, statements: Vec<String>) -> Result<usize, String> {
+    let none_matched = |i: usize| {
+        format!(
+            "Statement {} changed no row, so nothing was saved. Another user can have \
+             changed or deleted the row. Reload the page and edit it again.",
+            i + 1
+        )
+    };
+    match db {
+        Db::Postgres(client) => {
+            client.simple_query("begin").await.map_err(pg_error)?;
+            for (i, statement) in statements.iter().enumerate() {
+                let result = client.simple_query(statement).await;
+                let changed = match result {
+                    Ok(messages) => messages.iter().find_map(|m| match m {
+                        tokio_postgres::SimpleQueryMessage::CommandComplete(n) => Some(*n),
+                        _ => None,
+                    }),
+                    Err(e) => {
+                        let _ = client.simple_query("rollback").await;
+                        return Err(pg_error(e));
+                    }
+                };
+                if changed == Some(0) {
+                    let _ = client.simple_query("rollback").await;
+                    return Err(none_matched(i));
+                }
+            }
+            client.simple_query("commit").await.map_err(pg_error)?;
+            Ok(statements.len())
+        }
+        Db::Sqlite(sqlite) => {
+            blocking(move || {
+                let conn = sqlite
+                    .conn
+                    .lock()
+                    .map_err(|_| "The database is busy.".to_string())?;
+                conn.execute_batch("begin").map_err(sqlite_error)?;
+                for (i, statement) in statements.iter().enumerate() {
+                    match conn.execute(statement, []) {
+                        Ok(0) => {
+                            let _ = conn.execute_batch("rollback");
+                            return Err(none_matched(i));
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            let _ = conn.execute_batch("rollback");
+                            return Err(sqlite_error(e));
+                        }
+                    }
+                }
+                conn.execute_batch("commit").map_err(sqlite_error)?;
+                Ok(statements.len())
+            })
+            .await
+        }
+    }
+}
+
 pub fn delete_sql(
     table: &Table,
     columns: &[Column],
@@ -1307,6 +1368,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn changes_are_saved_together_or_not_at_all() {
+        let db = connect(memory()).await.unwrap().db;
+        execute(
+            db.clone(),
+            "create table t (id integer primary key, v text); \
+             insert into t (v) values ('a'), ('b')"
+                .into(),
+        )
+        .await
+        .unwrap();
+        let read = |db: Db| async move {
+            execute(db, "select v from t order by id".into())
+                .await
+                .unwrap()
+                .rows
+                .into_iter()
+                .map(|r| r[0].clone().unwrap_or_default())
+                .collect::<Vec<_>>()
+        };
+        // The second statement matches no row, so the first is rolled back.
+        let error = apply(
+            db.clone(),
+            vec![
+                "update t set v = 'x' where id = 1".into(),
+                "update t set v = 'y' where id = 99".into(),
+            ],
+        )
+        .await
+        .unwrap_err();
+        assert!(error.starts_with("Statement 2 changed no row"), "{error}");
+        assert_eq!(read(db.clone()).await, ["a", "b"]);
+        // A failing statement rolls back too.
+        assert!(
+            apply(
+                db.clone(),
+                vec![
+                    "update t set v = 'x' where id = 1".into(),
+                    "update nope set v = 1".into()
+                ]
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(read(db.clone()).await, ["a", "b"]);
+        // All good: all of it is saved.
+        let n = apply(
+            db.clone(),
+            vec![
+                "update t set v = 'x' where id = 1".into(),
+                "delete from t where id = 2".into(),
+            ],
+        )
+        .await
+        .unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(read(db).await, ["x"]);
+    }
+
+    #[tokio::test]
     async fn pages_can_be_filtered() {
         let db = connect(memory()).await.unwrap().db;
         execute(
@@ -1485,6 +1605,46 @@ mod tests {
             "{}",
             s.sql
         );
+        // Grid changes are saved together or not at all.
+        let read = |db: Db| async move {
+            execute(db, "select email from sq_customers order by id".into())
+                .await
+                .unwrap()
+                .rows
+                .into_iter()
+                .map(|r| r[0].clone().unwrap_or_default())
+                .collect::<Vec<_>>()
+        };
+        execute(
+            db.clone(),
+            "insert into sq_customers (email) values ('a'), ('b')".into(),
+        )
+        .await
+        .unwrap();
+        let ids = execute(db.clone(), "select id from sq_customers order by id".into())
+            .await
+            .unwrap();
+        let first = ids.rows[0][0].clone().unwrap();
+        let e = apply(
+            db.clone(),
+            vec![
+                format!("update sq_customers set email = 'x' where id = {first}"),
+                "update sq_customers set email = 'y' where id = -1".into(),
+            ],
+        )
+        .await
+        .unwrap_err();
+        assert!(e.starts_with("Statement 2 changed no row"), "{e}");
+        assert_eq!(read(db.clone()).await, ["a", "b"]);
+        apply(
+            db.clone(),
+            vec![format!(
+                "update sq_customers set email = 'x' where id = {first}"
+            )],
+        )
+        .await
+        .unwrap();
+        assert_eq!(read(db.clone()).await, ["x", "b"]);
         execute(db, "drop table sq_orders, sq_customers cascade".into())
             .await
             .unwrap();

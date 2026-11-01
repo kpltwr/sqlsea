@@ -345,6 +345,9 @@ impl Queries {
                     sort: None,
                     ids: QUERY_GRID,
                     on_scroll: Message::GridScrolled,
+                    on_edit: None,
+                    edit: None,
+                    changes: None,
                 }),
             }
         };

@@ -500,11 +500,13 @@ pub fn list_row(selected: bool) -> impl Fn(&Theme, button::Status) -> button::St
     }
 }
 
-/// A row of data in the grid.
-pub fn grid_row(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+/// A row of data in the grid. A row to delete is red.
+pub fn grid_row(selected: bool, deleted: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let c = colors(theme);
-        let bg = if selected {
+        let bg = if deleted {
+            c.error_wash
+        } else if selected {
             c.accent_wash
         } else {
             match status {
@@ -514,11 +516,33 @@ pub fn grid_row(selected: bool) -> impl Fn(&Theme, button::Status) -> button::St
         };
         button::Style {
             background: Some(bg.into()),
-            text_color: c.ink,
+            text_color: if deleted { c.error } else { c.ink },
             border: Border::default(),
             shadow: Shadow::default(),
             snap: true,
         }
+    }
+}
+
+/// A grid cell.
+pub fn cell(_: &Theme) -> container::Style {
+    container::Style::default()
+}
+
+/// A grid cell with a change that is not saved yet.
+pub fn cell_changed(theme: &Theme) -> container::Style {
+    let c = colors(theme);
+    container::Style {
+        background: Some(
+            Color {
+                a: 0.85,
+                ..c.accent_wash
+            }
+            .into(),
+        ),
+        border: hair(c.accent2, 0.0),
+        text_color: Some(c.on_wash),
+        ..Default::default()
     }
 }
 

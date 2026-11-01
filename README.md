@@ -55,7 +55,13 @@ Select Read-only for a connection to a database that you must not change, such a
 
 The search box above the table list finds tables by table name and by column name. If only a column name matches, the column shows below the table name.
 
-The Data tab shows the open table, 200 rows on each page. Click a column head to sort by that column. To show only some rows, type a condition in the filter box, for example `status = 'paid'`, and press Enter. Click a row to edit it in the panel on the right. Save writes only the fields that you changed. Add row inserts a row, and empty fields get their default values. You can edit rows only in tables that have a primary key. You cannot edit views.
+The Data tab shows the open table, 200 rows on each page. Click a column head to sort by that column. To show only some rows, type a condition in the filter box, for example `status = 'paid'`, and press Enter. Click a row to select it.
+
+To edit in the grid, double-click a cell, type the new value and press Enter. Tab goes to the next cell, and Esc cancels the edit. To mark the selected row for deletion, press Delete. Changed cells are blue and rows to delete are red. Nothing changes in the database until you click Save changes. Review SQL shows the statements that sqlsea will run. sqlsea runs all of them in one transaction. If one statement fails, or a row changed after the page loaded, nothing is saved. Before you go to a different page, sort, filter or open a different table, save or discard your changes.
+
+To edit a full row, select it and press Enter or click Open row. The row panel opens on the right. Save writes only the fields that you changed. Use the row panel for values with line breaks and to set a value to NULL. Add row inserts a row, and empty fields get their default values.
+
+You can edit rows only in tables that have a primary key. You cannot edit views.
 
 The Structure tab has five parts. Columns shows the columns, their types and defaults, and the primary key. Indexes shows the indexes and their columns. Foreign keys shows the keys to other tables, and Referenced by shows the keys in other tables that point to this table. SQL shows the CREATE statement, and Copy SQL copies it. SQLite keeps the original statement. For PostgreSQL, sqlsea makes the statement from the system catalog.
 
@@ -79,7 +85,9 @@ The top bar has the Auto, Light and Dark themes. Auto uses the theme of your des
 | Ctrl+R | Reload the tables and the open table |
 | Ctrl+1, 2, 3 | Go to Data, Structure or Query |
 | Up, Down, Page Up, Page Down, Home, End | Move the row selection |
-| Enter | Open the selected row |
+| Enter | Open the selected row in the row panel |
+| F2 | Edit the first cell of the selected row |
+| Delete | Mark the selected row for deletion, or unmark it |
 | Esc | Stop the running query, or close the row panel |
 | Tab, Shift+Tab | Go to the next or previous field |
 

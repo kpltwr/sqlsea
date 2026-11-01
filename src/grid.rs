@@ -1,7 +1,10 @@
 //! The result grid. The column heads stay at the top when the rows scroll.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use iced::widget::{
-    Column, Row, button, column, container, responsive, row, scrollable, space, text,
+    Column, Row, button, column, container, mouse_area, responsive, row, scrollable, space, text,
+    text_input,
 };
 use iced::{Element, Fill, Length, Padding};
 
@@ -45,6 +48,36 @@ pub struct Grid<'a, M> {
     pub ids: (&'static str, &'static str),
     /// Sends the horizontal scroll position of the rows, so that the heads can move with them.
     pub on_scroll: fn(Scrolled) -> M,
+    /// Sent when a cell is double-clicked, with its row and column.
+    pub on_edit: Option<fn(usize, usize) -> M>,
+    /// The cell that is being edited, if any.
+    pub edit: Option<CellEdit<'a, M>>,
+    /// Changes that are not saved yet.
+    pub changes: Option<&'a Changes>,
+}
+
+/// A cell that shows a text field.
+pub struct CellEdit<'a, M> {
+    pub row: usize,
+    pub column: usize,
+    pub value: &'a str,
+    pub on_input: fn(String) -> M,
+    pub on_submit: M,
+}
+
+/// Changes to the rows of a page that are not saved yet.
+#[derive(Debug, Clone, Default)]
+pub struct Changes {
+    /// New values, by row and column.
+    pub edited: BTreeMap<(usize, usize), Option<String>>,
+    /// Rows to delete.
+    pub deleted: BTreeSet<usize>,
+}
+
+impl Changes {
+    pub fn is_empty(&self) -> bool {
+        self.edited.is_empty() && self.deleted.is_empty()
+    }
 }
 
 fn widths(rs: &ResultSet) -> Vec<f32> {
@@ -89,6 +122,9 @@ pub fn view<'a, M: Clone + 'a>(grid: Grid<'a, M>) -> Element<'a, M> {
         sort,
         ids: (body_id, head_id),
         on_scroll,
+        on_edit,
+        edit,
+        changes,
     } = grid;
     let base = widths(result);
 
@@ -130,7 +166,27 @@ pub fn view<'a, M: Clone + 'a>(grid: Grid<'a, M>) -> Element<'a, M> {
         }));
 
         let rows = Column::with_children(result.rows.iter().enumerate().map(|(r, values)| {
+            let deleted = changes.is_some_and(|c| c.deleted.contains(&r));
             let cells = Row::with_children(values.iter().enumerate().map(|(i, v)| {
+                if let Some(edit) = edit.as_ref().filter(|e| e.row == r && e.column == i) {
+                    return container(
+                        text_input("", edit.value)
+                            .id("cell-edit")
+                            .on_input(edit.on_input)
+                            .on_submit(edit.on_submit.clone())
+                            .font(theme::MONO)
+                            .size(theme::TEXT_SM)
+                            .padding(Padding::from([4.0, 8.0]))
+                            .style(theme::field),
+                    )
+                    .width(widths[i])
+                    .height(ROW_H)
+                    .padding(Padding::from([1.0, 4.0]))
+                    .center_y(ROW_H)
+                    .into();
+                }
+                let changed = changes.and_then(|c| c.edited.get(&(r, i)));
+                let v = changed.unwrap_or(v);
                 let cell: Element<'a, M> = match v {
                     Some(v) => {
                         // All mono characters have the same width, so a character
@@ -162,19 +218,27 @@ pub fn view<'a, M: Clone + 'a>(grid: Grid<'a, M>) -> Element<'a, M> {
                         .style(theme::text_muted)
                         .into(),
                 };
-                container(cell)
+                let cell = container(cell)
                     .width(widths[i])
                     .height(ROW_H)
                     .padding(Padding::from([0.0, PAD_X]))
                     .center_y(ROW_H)
                     .clip(true)
-                    .into()
+                    .style(if changed.is_some() {
+                        theme::cell_changed
+                    } else {
+                        theme::cell
+                    });
+                match on_edit {
+                    Some(f) => mouse_area(cell).on_double_click(f(r, i)).into(),
+                    None => cell.into(),
+                }
             }));
             column![
                 button(cells)
                     .padding(0)
                     .width(total)
-                    .style(theme::grid_row(selected == Some(r)))
+                    .style(theme::grid_row(selected == Some(r), deleted))
                     .on_press_maybe(on_select.map(|f| f(r))),
                 container(space().height(1))
                     .width(total)

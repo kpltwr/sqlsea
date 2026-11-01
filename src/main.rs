@@ -159,6 +159,13 @@ struct Session {
     applied_filter: Option<String>,
     /// The column names of each table, for search and suggestions.
     column_index: ColumnIndex,
+    /// Grid changes that are not saved yet.
+    changes: grid::Changes,
+    /// The cell being edited in the grid: row, column and text.
+    cell_edit: Option<(usize, usize, String)>,
+    show_review: bool,
+    saving_changes: bool,
+    changes_error: Option<String>,
     structure: Load<db::Structure>,
     /// Goes up with each structure load, so that late answers are ignored.
     structure_run: u64,
@@ -309,7 +316,18 @@ enum Message {
     Sort(usize),
     PrevPage,
     NextPage,
+    /// Selects a row. An open row panel follows the selection.
     SelectRow(usize),
+    /// Opens a row in the row panel.
+    OpenRow(usize),
+    EditCell(usize, usize),
+    CellInput(String),
+    CommitCell,
+    ToggleDeleteRow,
+    ToggleReview,
+    SaveChanges,
+    DiscardChanges,
+    ChangesSaved(Result<usize, String>),
     AddRow,
     CloseInspector,
     FieldInput(usize, String),
@@ -590,6 +608,7 @@ impl App {
                         .map(Notice::Error);
                 }
             }
+            Message::Disconnect if self.session.as_mut().is_some_and(Session::blocked) => {}
             Message::Disconnect => {
                 self.session = None;
                 self.notice = None;
@@ -679,6 +698,13 @@ impl App {
             return Task::none();
         };
         match key.as_ref() {
+            Key::Named(Named::Tab)
+                if self.session.as_ref().is_some_and(|s| s.cell_edit.is_some()) =>
+            {
+                self.session
+                    .as_mut()
+                    .map_or(Task::none(), |s| s.on_key(key, modifiers))
+            }
             Key::Named(Named::Tab) if modifiers.shift() => operation::focus_previous(),
             Key::Named(Named::Tab) => operation::focus_next(),
             Key::Named(Named::Enter) if self.session.is_none() && !self.busy => {
@@ -988,6 +1014,11 @@ impl Session {
             applied_filter: None,
             scrolled: std::collections::HashMap::new(),
             column_index: ColumnIndex::new(),
+            changes: grid::Changes::default(),
+            cell_edit: None,
+            show_review: false,
+            saving_changes: false,
+            changes_error: None,
             structure: Load::Idle,
             structure_run: 0,
             structure_view: StructureView::Columns,
@@ -1012,6 +1043,122 @@ impl Session {
             self.tab = Tab::Data;
         }
         self.load_columns()
+    }
+
+    /// True if there are grid changes, after it tells the user to save or discard them.
+    fn blocked(&mut self) -> bool {
+        self.commit_cell();
+        let n = self.changes.edited.len() + self.changes.deleted.len();
+        if n == 0 {
+            return false;
+        }
+        self.status = Some(Notice::Error(format!(
+            "Save or discard the {} in the grid first.",
+            count(n as u64, "change")
+        )));
+        true
+    }
+
+    fn row_has_changes(&self, r: usize) -> bool {
+        self.changes.deleted.contains(&r) || self.changes.edited.keys().any(|(row, _)| *row == r)
+    }
+
+    /// Starts to edit a cell in the grid.
+    fn edit_cell(&mut self, r: usize, c: usize) -> Task<Message> {
+        self.commit_cell();
+        if !self.editable() {
+            self.status = Some(Notice::Error(
+                if self.config.read_only {
+                    "This connection is read-only."
+                } else if self.current.as_ref().is_some_and(|t| t.is_view) {
+                    "Views are read-only here."
+                } else {
+                    "This table has no primary key, so its rows are read-only here."
+                }
+                .into(),
+            ));
+            return Task::none();
+        }
+        if self.changes.deleted.contains(&r) {
+            return Task::none();
+        }
+        let Some(original) = self
+            .page
+            .ready()
+            .and_then(|p| p.result.rows.get(r))
+            .and_then(|row| row.get(c))
+            .cloned()
+        else {
+            return Task::none();
+        };
+        let current = self
+            .changes
+            .edited
+            .get(&(r, c))
+            .cloned()
+            .unwrap_or(original);
+        // A value with line breaks needs the multi-line editor of the row panel.
+        if current.as_deref().is_some_and(|v| v.contains('\n')) {
+            self.status = Some(Notice::Ok(
+                "Values with line breaks open in the row panel.".into(),
+            ));
+            return self.update(Message::OpenRow(r));
+        }
+        self.inspector = None;
+        self.selected = Some(r);
+        self.cell_edit = Some((r, c, current.unwrap_or_default()));
+        operation::focus("cell-edit")
+    }
+
+    /// Keeps the text of the edited cell as a change, if it differs.
+    fn commit_cell(&mut self) {
+        let Some((r, c, value)) = self.cell_edit.take() else {
+            return;
+        };
+        let original = self
+            .page
+            .ready()
+            .and_then(|p| p.result.rows.get(r))
+            .and_then(|row| row.get(c))
+            .cloned()
+            .flatten();
+        // An empty cell that was NULL stays NULL.
+        if original.as_deref() == Some(value.as_str()) || (original.is_none() && value.is_empty()) {
+            self.changes.edited.remove(&(r, c));
+        } else {
+            self.changes.edited.insert((r, c), Some(value));
+        }
+    }
+
+    /// The statements that save the grid changes: updates, then deletes.
+    fn change_sql(&self) -> Vec<String> {
+        let (Some(table), Some(columns), Some(page)) = (
+            self.current.as_ref(),
+            self.columns.ready(),
+            self.page.ready(),
+        ) else {
+            return Vec::new();
+        };
+        let mut rows: std::collections::BTreeMap<usize, Vec<(usize, Option<String>)>> =
+            std::collections::BTreeMap::new();
+        for ((r, c), value) in &self.changes.edited {
+            rows.entry(*r).or_default().push((*c, value.clone()));
+        }
+        let mut out = Vec::new();
+        for (r, changes) in rows {
+            if self.changes.deleted.contains(&r) {
+                continue;
+            }
+            if let Some(sql) = db::update_sql(table, columns, &page.result.rows[r], &changes) {
+                out.push(sql);
+            }
+        }
+        for r in &self.changes.deleted {
+            if let Some(sql) = db::delete_sql(table, columns, &page.result.rows[*r]) {
+                out.push(sql);
+            }
+        }
+        out
     }
 
     /// Loads indexes, keys and SQL, while the Structure tab shows and they are not loaded.
@@ -1090,6 +1237,19 @@ impl Session {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            // Grid changes that are not saved block anything that reloads the rows.
+            Message::PrevPage
+            | Message::NextPage
+            | Message::Sort(_)
+            | Message::ApplyFilter
+            | Message::ClearFilter
+            | Message::OpenTable(_)
+            | Message::Refresh
+            | Message::Reload
+                if self.blocked() =>
+            {
+                return Task::none();
+            }
             Message::Refresh => {
                 let tables = self.load_tables();
                 return match self.current {
@@ -1213,6 +1373,20 @@ impl Session {
                 return self.load_page();
             }
             Message::SelectRow(r) => {
+                self.commit_cell();
+                self.selected = Some(r);
+                if self.inspector.is_some() {
+                    return self.update(Message::OpenRow(r));
+                }
+            }
+            Message::OpenRow(r) => {
+                self.commit_cell();
+                if self.row_has_changes(r) {
+                    self.status = Some(Notice::Error(
+                        "Save or discard the changes to this row first.".into(),
+                    ));
+                    return Task::none();
+                }
                 let (Some(page), Some(columns)) = (self.page.ready(), self.columns.ready()) else {
                     return Task::none();
                 };
@@ -1231,6 +1405,57 @@ impl Session {
                     error: None,
                     saving: false,
                 });
+            }
+            Message::EditCell(r, c) => return self.edit_cell(r, c),
+            Message::CellInput(text) => {
+                if let Some((_, _, value)) = &mut self.cell_edit {
+                    *value = text;
+                }
+            }
+            Message::CommitCell => self.commit_cell(),
+            Message::ToggleDeleteRow => {
+                if let Some(r) = self.selected
+                    && self.editable()
+                    && self.inspector.is_none()
+                {
+                    self.commit_cell();
+                    if !self.changes.deleted.remove(&r) {
+                        self.changes.deleted.insert(r);
+                    }
+                }
+            }
+            Message::ToggleReview => self.show_review = !self.show_review,
+            Message::DiscardChanges => {
+                self.changes = grid::Changes::default();
+                self.cell_edit = None;
+                self.show_review = false;
+                self.changes_error = None;
+            }
+            Message::SaveChanges => {
+                self.commit_cell();
+                let statements = self.change_sql();
+                if statements.is_empty() || self.saving_changes {
+                    return Task::none();
+                }
+                self.saving_changes = true;
+                self.changes_error = None;
+                return Task::perform(
+                    db::apply(self.db.clone(), statements),
+                    Message::ChangesSaved,
+                );
+            }
+            Message::ChangesSaved(result) => {
+                self.saving_changes = false;
+                match result {
+                    Ok(n) => {
+                        self.changes = grid::Changes::default();
+                        self.show_review = false;
+                        self.status =
+                            Some(Notice::Ok(format!("Saved {}.", count(n as u64, "change"))));
+                        return self.load_page();
+                    }
+                    Err(e) => self.changes_error = Some(explain(&e)),
+                }
             }
             Message::AddRow => {
                 let Some(columns) = self.columns.ready() else {
@@ -1641,7 +1866,37 @@ impl Session {
     }
 
     fn on_key(&mut self, key: Key, modifiers: keyboard::Modifiers) -> Task<Message> {
+        // While a cell is edited, Esc cancels, and Tab moves to the next cell.
+        if let Some((r, c, _)) = self.cell_edit {
+            return match key.as_ref() {
+                Key::Named(Named::Escape) => {
+                    self.cell_edit = None;
+                    Task::none()
+                }
+                Key::Named(Named::Tab) => {
+                    self.commit_cell();
+                    let columns = self.columns.ready().map_or(0, |c| c.len());
+                    let next = if modifiers.shift() {
+                        c.checked_sub(1)
+                    } else {
+                        Some(c + 1)
+                    };
+                    match next.filter(|n| *n < columns) {
+                        Some(n) => self.edit_cell(r, n),
+                        None => Task::none(),
+                    }
+                }
+                _ => Task::none(),
+            };
+        }
         match key.as_ref() {
+            Key::Named(Named::Delete) if self.tab == Tab::Data => {
+                self.update(Message::ToggleDeleteRow)
+            }
+            Key::Named(Named::F2) if self.tab == Tab::Data => match self.selected {
+                Some(r) => self.edit_cell(r, 0),
+                None => Task::none(),
+            },
             Key::Named(Named::Escape) if self.inspector.is_some() => {
                 self.update(Message::CloseInspector)
             }
@@ -1665,7 +1920,7 @@ impl Session {
                     (Some(step), _) => self.update(Message::MoveSelection(step)),
                     (None, Named::Enter) if self.tab == Tab::Data && self.inspector.is_none() => {
                         match self.selected {
-                            Some(r) => self.update(Message::SelectRow(r)),
+                            Some(r) => self.update(Message::OpenRow(r)),
                             None => Task::none(),
                         }
                     }
@@ -1992,6 +2247,11 @@ impl Session {
                 theme::key,
                 can_add.then_some(Message::AddRow),
             ))
+            .push(small_key(
+                if short { "Open" } else { "Open row" },
+                theme::key,
+                self.selected.map(Message::OpenRow),
+            ))
             .push(small_key("Export", theme::key, Some(Message::ExportTable)))
             .into()
     }
@@ -2026,6 +2286,20 @@ impl Session {
                 sort: self.sort,
                 ids: DATA_GRID,
                 on_scroll: Message::GridScrolled,
+                on_edit: self
+                    .editable()
+                    .then_some(Message::EditCell as fn(usize, usize) -> Message),
+                edit: self
+                    .cell_edit
+                    .as_ref()
+                    .map(|(row, column, value)| grid::CellEdit {
+                        row: *row,
+                        column: *column,
+                        value,
+                        on_input: Message::CellInput,
+                        on_submit: Message::CommitCell,
+                    }),
+                changes: Some(&self.changes),
             }),
         };
 
@@ -2048,9 +2322,81 @@ impl Session {
         column![
             container(bar).padding(Padding::from([8.0, 12.0])),
             hrule(),
+            self.review_bar(),
             rows
         ]
         .into()
+    }
+
+    /// The bar with the grid changes that are not saved yet, if there are any.
+    fn review_bar(&self) -> Option<Element<'_, Message>> {
+        let edited = self.changes.edited.len();
+        let deleted = self.changes.deleted.len();
+        if self.changes.is_empty() {
+            return None;
+        }
+        let mut parts = Vec::new();
+        if edited > 0 {
+            parts.push(count(edited as u64, "changed cell"));
+        }
+        if deleted > 0 {
+            parts.push(count(deleted as u64, "row") + " to delete");
+        }
+        let actions = row![
+            fit(parts.join(" and "))
+                .font(theme::BODY_MEDIUM)
+                .size(theme::TEXT_SM)
+                .width(Fill),
+            quiet_toggle("Review SQL", self.show_review, Message::ToggleReview),
+            small_key(
+                "Discard",
+                theme::key,
+                (!self.saving_changes).then_some(Message::DiscardChanges)
+            ),
+            small_key(
+                if self.saving_changes {
+                    "Saving"
+                } else {
+                    "Save changes"
+                },
+                theme::key_primary,
+                (!self.saving_changes).then_some(Message::SaveChanges),
+            ),
+        ]
+        .spacing(8)
+        .align_y(Center);
+        let mut bar = column![actions].spacing(10);
+        if let Some(e) = &self.changes_error {
+            bar = bar.push(error_note(e));
+        }
+        if self.show_review {
+            let sql = self.change_sql().join(";\n") + ";";
+            bar = bar.push(
+                container(
+                    scrollable(
+                        text(sql)
+                            .font(theme::MONO)
+                            .size(theme::TEXT_SM)
+                            .wrapping(text::Wrapping::WordOrGlyph),
+                    )
+                    .style(theme::scroller),
+                )
+                .padding(12)
+                .max_height(180)
+                .width(Fill)
+                .style(theme::graphite),
+            );
+        }
+        Some(
+            column![
+                container(bar)
+                    .padding(Padding::from([8.0, 12.0]))
+                    .width(Fill)
+                    .style(theme::query_strip),
+                hrule()
+            ]
+            .into(),
+        )
     }
 
     fn structure_view(&self) -> Element<'_, Message> {
@@ -2691,6 +3037,24 @@ fn ssh_fields(f: &Config) -> Element<'_, Message> {
     .into()
 }
 
+/// A key that looks pressed while its panel is open.
+fn quiet_toggle<'a>(label: &'a str, on: bool, message: Message) -> Element<'a, Message> {
+    button(
+        container(
+            text(label)
+                .font(theme::BODY_MEDIUM)
+                .size(theme::TEXT_SM)
+                .wrapping(text::Wrapping::None),
+        )
+        .center_y(Length::Fill),
+    )
+    .height(theme::CONTROL_H)
+    .padding(Padding::from([0.0, 12.0]))
+    .style(theme::key_toggle(on))
+    .on_press(message)
+    .into()
+}
+
 /// A grid in the Structure tab, or a note if it has no rows.
 fn structure_grid<'a>(rs: &'a ResultSet, empty: &'static str) -> Element<'a, Message> {
     if rs.rows.is_empty() {
@@ -2704,6 +3068,9 @@ fn structure_grid<'a>(rs: &'a ResultSet, empty: &'static str) -> Element<'a, Mes
         sort: None,
         ids: STRUCTURE_GRID,
         on_scroll: Message::GridScrolled,
+        on_edit: None,
+        edit: None,
+        changes: None,
     })
 }
 
@@ -2900,7 +3267,17 @@ fn script() -> Task<Message> {
         let (verb, arg) = step.split_once(':').unwrap_or((step.as_str(), ""));
         let message = match verb {
             "table" => Some(Message::OpenTableNamed(arg.to_string())),
-            "row" => arg.parse().ok().map(Message::SelectRow),
+            "row" => arg.parse().ok().map(Message::OpenRow),
+            "select" => arg.parse().ok().map(Message::SelectRow),
+            "editcell" => arg
+                .split_once(',')
+                .and_then(|(r, c)| Some(Message::EditCell(r.parse().ok()?, c.parse().ok()?))),
+            "cellvalue" => Some(Message::CellInput(arg.to_string())),
+            "commitcell" => Some(Message::CommitCell),
+            "markdelete" => Some(Message::ToggleDeleteRow),
+            "review" => Some(Message::ToggleReview),
+            "savechanges" => Some(Message::SaveChanges),
+            "discardchanges" => Some(Message::DiscardChanges),
             "add" => Some(Message::AddRow),
             "tab" => Some(Message::SwitchTab(match arg {
                 "structure" => Tab::Structure,

@@ -1,5 +1,5 @@
-//! A small line-based SQL highlighter for the query editor. Keywords take the
-//! cobalt tint; strings a softer one; comments recede. No rainbow.
+//! The SQL highlighter for the query editor. It works one line at a time and
+//! colors keywords, literals and comments.
 
 use std::ops::Range;
 
@@ -167,7 +167,7 @@ fn tokens(line: &str) -> Vec<(Range<usize>, Token)> {
                 out.push((start..i, Token::Keyword));
             }
         } else if c == b'"' {
-            // Quoted identifiers stay plain; skip so their contents are not read as keywords.
+            // Skip quoted identifiers, so that the words in them are not read as keywords.
             i += 1;
             while i < bytes.len() && bytes[i] != b'"' {
                 i += 1;

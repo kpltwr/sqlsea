@@ -4,72 +4,73 @@
 
 ## The mark
 
-A wave over two table rows: the sea, then the data. It sits on a key with two cut corners and a darker bottom edge, the same keycap the app's buttons use.
+The mark is a wave above two table rows. The wave is the sea and the rows are the data. The mark is on a blue tile with two cut corners and a darker bottom edge, like the buttons in the app.
 
-The app icon is drawn twice. `icon.svg` is the full drawing, for 48 px and up. `icon-small.svg` drops a row and thickens the strokes for 16 to 32 px, where three rows would blur together.
+There are two drawings of the app icon. Use `icon.svg` at 48 px and larger. Use `icon-small.svg` from 16 px to 32 px. It has one row less and thicker lines, so that it stays clear at small sizes.
 
 ## Files
 
-Edit the sources in `source/`, then rebuild everything with:
+Edit the files in `source/`. Then run this command to make all files again:
 
 ```sh
 cargo run --example brand
 ```
 
-That writes `svg/` (text turned into outlines, so the files look right without the fonts installed) and `png/`.
+The command writes the SVG files to `svg/`, with the text changed to outlines. These files look correct on computers that do not have the fonts. The command also writes the PNG files to `png/`, and the icon files `icon.ico` (Windows) and `icon.icns` (macOS).
 
 | Asset | Use | Files |
 | --- | --- | --- |
-| App icon | Launchers, the window, the docs | `svg/icon.svg`, `png/icon-16.png` to `icon-1024.png` |
-| Lockup | The README, the website, slides | `svg/lockup.svg`, `png/lockup-528.png`, `png/lockup-1056.png` |
-| Lockup on dark | On graphite or any dark ground | `svg/lockup-dark.svg` and PNGs |
-| Lockup in one colour | Print, engraving, single-ink | `svg/lockup-mono.svg` and PNGs |
-| Wordmark | Where the icon already appears nearby | `svg/wordmark.svg` and PNGs |
-| Mark | The glyph without its key, on light grounds | `svg/mark.svg`, `svg/mark-mono.svg` and PNGs |
-| Social preview | The repository card, link previews | `png/social-1280.png` |
-| Brand sheet | Everything on one page | `png/sheet-1600.png` |
+| App icon | Launchers, the window, the docs | `svg/icon.svg`, `png/icon-16.png` to `png/icon-1024.png`, `icon.ico`, `icon.icns` |
+| Lockup | The README, websites, slides | `svg/lockup.svg`, `png/lockup-528.png`, `png/lockup-1056.png` |
+| Lockup for dark backgrounds | Dark backgrounds | `svg/lockup-dark.svg` and the PNG files |
+| One-color lockup | Print with one ink | `svg/lockup-mono.svg` and the PNG files |
+| Wordmark | Places where the icon is near | `svg/wordmark.svg` and the PNG files |
+| Mark | The mark without its tile, on light backgrounds | `svg/mark.svg`, `svg/mark-mono.svg` and the PNG files |
+| Social preview | The repository card and link previews | `png/social-1280.png` |
+| Brand sheet | All of the brand on one page | `png/sheet-1600.png` |
 
-## Using it
+## Rules for use
 
-- **Clear space:** keep the height of one table row of the mark (about a seventh of the icon) clear on every side.
-- **Smallest sizes:** the lockup at 96 px wide; the icon at 16 px, using the small drawing.
-- **The name** is always lower case, `sqlsea`, in Familjen Grotesk 600 with slightly tight spacing (−0.028 em).
-- **The tile stays cobalt** on light and dark grounds. Use the one-colour lockup only where colour cannot print.
+Keep a clear space around the mark on all sides. The clear space is the height of one table row of the mark, about one seventh of the icon.
 
-Do not:
+Do not make the lockup narrower than 96 px. Do not make the icon smaller than 16 px, and use the small drawing below 48 px.
 
-- recolour the tile, or put the cobalt tile on a cobalt ground;
-- add gradients, shadows or outlines to the mark;
-- stretch, rotate or round the cut corners;
-- set the name in another face, in capitals, or with the icon below it.
+Write the name in lower case, `sqlsea`, in Familjen Grotesk 600. The letter spacing is −0.028 em.
 
-## Colour
+The tile is always blue, on light and on dark backgrounds. Use the one-color lockup only if you cannot print in color.
 
-Cobalt is the one signal: in the app it marks the primary action, the chosen row and state, and nothing else. The neutrals lean slightly blue.
+Do not do these things:
 
-| Name | Hex | Role |
+1. Do not change the color of the tile. Do not put the blue tile on a blue background.
+2. Do not add gradients, shadows or outlines to the mark.
+3. Do not stretch or turn the mark, and do not round the cut corners.
+4. Do not set the name in a different font, in capital letters, or below the icon.
+
+## Colors
+
+The blue accent marks only the primary action, the selection and state. The other colors are neutral, with a little blue in them.
+
+| Name | Hex | Use |
 | --- | --- | --- |
-| Cobalt | `#0462d3` | Primary action, selection, the tile |
-| Cobalt edge | `#003d98` | Key edges |
-| Wash | `#e3f0ff` | The chosen row, changed fields |
-| Sky | `#75b4ff` | SQL keywords on graphite |
-| Graphite | `#121823` | The SQL editor, dark grounds |
+| Cobalt | `#0462d3` | The primary action, the selection, the tile |
+| Cobalt edge | `#003d98` | The bottom edge of buttons |
+| Wash | `#e3f0ff` | The selected row, changed fields |
+| Sky | `#75b4ff` | SQL keywords in the editor |
+| Graphite | `#121823` | The SQL editor, dark backgrounds |
 | Graphite ink | `#e3e8ee` | Text on graphite |
 | Error | `#c9302d` | Errors only |
-| Paper | `#f8fbfe` | Background |
-| Paper 2 | `#eff3f8` | Sidebar, table heads |
-| Paper 3 | `#e3e8ef` | Trays, hover |
-| Rule | `#dadee4` | Hairlines |
+| Paper | `#f8fbfe` | The background |
+| Paper 2 | `#eff3f8` | The sidebar, table heads |
+| Paper 3 | `#e3e8ef` | Option groups, hover |
+| Rule | `#dadee4` | Thin lines |
 | Ink | `#111825` | Text |
 | Ink 2 | `#363e49` | Labels |
-| Muted | `#5d646e` | Secondary text |
+| Muted | `#5d646e` | Less important text |
 
-The app reads these from `src/theme.rs`; change them there and in `source/` together.
+These are the light colors. The app also has a dark set. Both sets are in `src/theme.rs`. If you change a color, change it in `src/theme.rs` and in `source/`.
 
-## Type
+## Fonts
 
-- **Familjen Grotesk** 600 for the name and headings, 500 for labels.
-- **IBM Plex Sans** 400 and 500 for interface text.
-- **JetBrains Mono** for SQL and data values, never for labels.
+Familjen Grotesk 600 is for the name and headings, and 500 is for labels. IBM Plex Sans 400 and 500 are for other text. JetBrains Mono is for SQL and data, never for labels.
 
-All three are under the SIL Open Font License; the files and licences are in `assets/fonts`.
+The three fonts have the SIL Open Font License. The font files and the licenses are in `assets/fonts`.

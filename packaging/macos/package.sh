@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Builds a macOS release of sqlsea into dist/:
-#   dist/sqlsea-<version>-macos.dmg   sqlsea.app for Apple silicon and Intel
-# Run from any folder on a Mac with the Xcode command line tools.
+# Makes a macOS package of sqlsea: dist/sqlsea-<version>-macos.dmg.
+# The app in it runs on Apple silicon and on Intel.
+# Run this script on a Mac that has the Xcode command line tools.
 #
-# Signing is optional. By default the app gets an ad-hoc signature, which runs
-# on the Mac that built it; elsewhere Gatekeeper asks before first launch. To
-# sign and notarize for distribution, set:
+# Without a signing identity, the app gets an ad-hoc signature. It runs on the
+# Mac that built it. On other Macs, macOS asks before the first start.
+# To sign and notarize the app, set these variables:
 #   SQLSEA_SIGN_ID         a "Developer ID Application: ..." identity in your keychain
-#   SQLSEA_NOTARY_PROFILE  a profile saved with `xcrun notarytool store-credentials`
-#   SQLSEA_BUNDLE_ID       the bundle identifier (default dev.sqlsea.app)
+#   SQLSEA_NOTARY_PROFILE  a profile from `xcrun notarytool store-credentials`
+#   SQLSEA_BUNDLE_ID       the bundle identifier (the default is dev.sqlsea.app)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 

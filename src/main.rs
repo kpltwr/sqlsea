@@ -24,7 +24,7 @@ use fit::fit;
 use store::Appearance;
 
 const PAGE: u64 = 200;
-/// The modifier for shortcuts, as macOS and everyone else name it.
+/// The name of the shortcut key on macOS and on other systems.
 const RUN_KEY: &str = if cfg!(target_os = "macos") {
     "Cmd"
 } else {
@@ -44,11 +44,11 @@ fn main() -> iced::Result {
             size: window_size(),
             min_size: Some(iced::Size::new(760.0, 520.0)),
             icon: window_icon(),
-            // On Linux the app draws its own title bar; see `chrome`.
+            // On Linux, the app draws its own title bar. See `chrome`.
             decorations: !chrome::CUSTOM,
             #[cfg(target_os = "linux")]
             platform_specific: iced::window::settings::PlatformSpecific {
-                // Matches packaging/linux/sqlsea.desktop so launchers show the icon.
+                // Same as in packaging/linux/sqlsea.desktop, so that launchers show the icon.
                 application_id: "sqlsea".into(),
                 ..Default::default()
             },
@@ -60,7 +60,7 @@ fn main() -> iced::Result {
     app.run()
 }
 
-/// 1280 by 800; screenshot builds take `SQLSEA_SIZE=WxH` to test other sizes.
+/// 1280 by 800. Screenshot builds read `SQLSEA_SIZE=WxH` to test other sizes.
 fn window_size() -> iced::Size {
     #[cfg(feature = "shot")]
     if let Some((w, h)) = std::env::var("SQLSEA_SIZE")
@@ -116,18 +116,18 @@ enum Notice {
 struct App {
     saved: Vec<Config>,
     form: Config,
-    /// Index into `saved` of the connection in the form, when it is a saved one.
+    /// The index in `saved` of the connection in the form, if it is saved.
     editing: Option<usize>,
     busy: bool,
     notice: Option<Notice>,
     session: Option<Session>,
     appearance: Appearance,
-    /// What the desktop prefers, for `Appearance::Auto`.
+    /// The theme of the desktop, for `Appearance::Auto`.
     system_dark: bool,
 }
 
 struct Session {
-    /// Whether the PostgreSQL connection is encrypted; `None` for SQLite.
+    /// True if the PostgreSQL connection is encrypted. `None` for SQLite.
     encrypted: Option<bool>,
     config: Config,
     db: Db,
@@ -141,13 +141,13 @@ struct Session {
     sort: Option<(usize, bool)>,
     selected: Option<usize>,
     inspector: Option<Inspector>,
-    /// Bumped on every table switch or reload so late answers are dropped.
+    /// Goes up on each table change or reload, so that late answers are ignored.
     generation: u64,
     queries: query::Queries,
     status: Option<Notice>,
 }
 
-/// A table's columns, with the structure listing built once when they load.
+/// The columns of a table, and the Structure tab rows, made once at load.
 struct Columns {
     list: Vec<db::Column>,
     listing: ResultSet,
@@ -198,7 +198,7 @@ struct Field {
     value: String,
     null: bool,
     original: Option<String>,
-    /// Values with line breaks are edited in a multi-line editor.
+    /// A value with line breaks uses a multi-line editor.
     editor: Option<text_editor::Content>,
 }
 
@@ -241,6 +241,10 @@ enum Message {
     FormCaFile(String),
     FormTimeout(String),
     FormPath(String),
+    BrowseDatabase,
+    BrowseCaFile,
+    /// The field to fill, and the file that the user chose, if any.
+    FilePicked(FileField, Option<String>),
     Test,
     Tested(Result<Option<bool>, String>),
     Connect,
@@ -276,7 +280,7 @@ enum Message {
     #[cfg(feature = "shot")]
     SetSql(String),
     Run,
-    /// Query tab id, run number, result.
+    /// The query tab id, the run number and the result.
     QueryDone(u64, u64, Result<ResultSet, String>),
     SelectQueryRow(usize),
     Cancel,
@@ -287,11 +291,11 @@ enum Message {
     ToggleHistory,
     HistoryFilter(String),
     UseHistory(usize),
-    /// Redraws the elapsed time of running queries.
+    /// Updates the time shown for running queries.
     Tick,
     ExportQuery,
     ExportTable,
-    /// The file written and its row count, or nothing when the dialog was closed.
+    /// The saved file and its row count, or nothing if the user closed the dialog.
     Exported(Result<Option<(String, usize)>, String>),
     CopyRow,
     GridScrolled(&'static str, f32),
@@ -317,7 +321,7 @@ impl App {
             system_dark: false,
         };
         let mut task = iced::system::theme().map(Message::SystemTheme);
-        // `sqlsea app.db` opens a SQLite file; `sqlsea name` opens a saved connection.
+        // `sqlsea app.db` opens a SQLite file. `sqlsea name` opens a saved connection.
         if let Some(arg) = std::env::args().nth(1) {
             if let Some(i) = app.saved.iter().position(|c| c.name == arg) {
                 app.form = app.saved[i].clone();
@@ -383,7 +387,13 @@ impl App {
                 self.editing = None;
                 self.notice = None;
             }
-            Message::FormKind(kind) => self.form.kind = kind,
+            Message::FormKind(kind) => {
+                // A message about one kind of database is not correct for the other kind.
+                if self.form.kind != kind {
+                    self.notice = None;
+                }
+                self.form.kind = kind;
+            }
             Message::FormName(v) => self.form.name = v,
             Message::FormHost(v) => self.form.host = v,
             Message::FormPort(v) => self.form.port = v,
@@ -394,6 +404,20 @@ impl App {
             Message::FormCaFile(v) => self.form.ca_file = v,
             Message::FormTimeout(v) => self.form.timeout = v,
             Message::FormPath(v) => self.form.path = v,
+            Message::BrowseDatabase => {
+                return pick_file(FileField::Database, &self.form.path);
+            }
+            Message::BrowseCaFile => return pick_file(FileField::CaFile, &self.form.ca_file),
+            Message::FilePicked(field, Some(path)) => match field {
+                FileField::Database => {
+                    if self.form.name.trim().is_empty() {
+                        self.form.name = file_stem(&path);
+                    }
+                    self.form.path = path;
+                }
+                FileField::CaFile => self.form.ca_file = path,
+            },
+            Message::FilePicked(_, None) => {}
             Message::Test => {
                 self.busy = true;
                 self.notice = None;
@@ -465,7 +489,7 @@ impl App {
             Message::SetAppearance(appearance) => {
                 self.appearance = appearance;
                 if let Err(e) = store::save_settings(&store::Settings { appearance }) {
-                    self.notice = Some(Notice::Error(format!("Could not save the setting: {e}")));
+                    self.notice = Some(Notice::Error(format!("The setting was not saved: {e}")));
                 }
             }
             Message::Window(action) => return chrome::perform(action),
@@ -498,12 +522,12 @@ impl App {
         Task::none()
     }
 
-    /// Put a connection that worked at the top of the saved list.
+    /// Puts a connection that worked at the top of the saved list.
     fn remember(&mut self, config: &Config) {
         if let Some(i) = self.editing.take() {
             self.saved.remove(i);
         }
-        // A different connection with the same name is replaced, password and all.
+        // Replace a different connection with the same name, and delete its password.
         for old in self
             .saved
             .iter()
@@ -515,11 +539,11 @@ impl App {
         self.saved.insert(0, config.clone());
         self.editing = Some(0);
         if let Err(e) = store::save(&self.saved) {
-            self.notice = Some(Notice::Error(format!("Could not save the connection: {e}")));
+            self.notice = Some(Notice::Error(format!("The connection was not saved: {e}")));
         } else if let Err(e) = store::set_password(&config.id, &config.password) {
             self.notice = Some(Notice::Error(format!(
-                "Connected, but the password could not go into the system keyring, \
-                 so it was not saved.\n{e}"
+                "Connected. The password was not saved, because the system keyring \
+                 did not accept it.\n{e}"
             )));
         }
     }
@@ -670,28 +694,32 @@ impl App {
                 .push((f.tls == Tls::Verify).then(|| {
                     labelled(
                         "CA certificate file",
-                        input(
-                            "Optional. A PEM file from your provider",
-                            &f.ca_file,
-                            Message::FormCaFile,
-                        )
-                        .font(theme::MONO),
+                        with_browse(
+                            input(
+                                "Optional. A PEM file from your provider",
+                                &f.ca_file,
+                                Message::FormCaFile,
+                            )
+                            .font(theme::MONO),
+                            Message::BrowseCaFile,
+                        ),
                     )
                 })),
-            Kind::Sqlite => fields.push(
-                row![
-                    labelled(
-                        "Database file",
+            Kind::Sqlite => fields
+                .push(labelled(
+                    "Database file",
+                    with_browse(
                         input("~/data/app.db", &f.path, Message::FormPath).font(theme::MONO),
+                        Message::BrowseDatabase,
                     ),
+                ))
+                .push(
                     container(labelled(
                         "Time limit, s",
-                        input("None", &f.timeout, Message::FormTimeout)
+                        input("None", &f.timeout, Message::FormTimeout),
                     ))
                     .width(110),
-                ]
-                .spacing(12),
-            ),
+                ),
         };
 
         let note: Element<_> = match &self.notice {
@@ -741,10 +769,10 @@ impl App {
         .padding(24)
         .width(Fill)
         .style(theme::panel);
-        // On short windows the form scrolls rather than spilling off the bottom.
+        // If the window is short, the form scrolls.
         let form = scrollable(form).style(theme::scroller).width(Fill);
 
-        // The list and the form share the width two to three, up to their own maximums.
+        // The list gets two parts of the width and the form gets three, up to a limit.
         let columns = row![
             container(saved)
                 .width(Length::FillPortion(2))
@@ -814,8 +842,8 @@ impl Session {
         })
     }
 
-    /// Rows come in primary-key order unless a column head chose otherwise,
-    /// so pages stay put.
+    /// The row order: the sort column if there is one, otherwise the primary key.
+    /// A fixed order keeps the same rows on each page.
     fn order(&self) -> Option<(String, bool)> {
         let columns = self.columns.ready()?;
         match self.sort {
@@ -867,7 +895,7 @@ impl Session {
             }
             Message::TablesLoaded(result) => match result {
                 Ok(tables) => {
-                    // Keep the open table if it still exists; otherwise open the first.
+                    // Keep the open table if it still exists. If not, open the first table.
                     let keep = self.current.as_ref().is_some_and(|t| tables.contains(t));
                     let first = tables.first().cloned();
                     self.tables = Load::Ready(tables);
@@ -1056,9 +1084,9 @@ impl Session {
                 };
                 store::record(&mut self.queries.history, entry);
                 if let Err(e) = store::save_history(&self.config.id, &self.queries.history) {
-                    self.status = Some(Notice::Error(format!("Could not save the history: {e}")));
+                    self.status = Some(Notice::Error(format!("The history was not saved: {e}")));
                 }
-                // A statement without a result set may have created or dropped a table.
+                // A statement without rows can add or remove a table, so reload the list.
                 if changed_schema {
                     return self.load_tables();
                 }
@@ -1076,12 +1104,12 @@ impl Session {
             }
             Message::Cancelled(Err(e)) => {
                 self.queries.active_mut().cancelling = false;
-                self.status = Some(Notice::Error(format!("Could not cancel the query: {e}")));
+                self.status = Some(Notice::Error(format!("The query did not stop: {e}")));
             }
             Message::NewQuery => {
                 self.queries.add();
                 self.tab = Tab::Query;
-                // The new tab is last; bring it into view in the tab strip.
+                // The new tab is the last one. Scroll the tab strip to show it.
                 return Task::batch([
                     operation::focus("sql"),
                     operation::snap_to("query-tabs", operation::RelativeOffset::END),
@@ -1451,7 +1479,7 @@ impl Session {
             tab("Query", Tab::Query),
         ]
         .spacing(4);
-        // On a narrow main area the tools get a line of their own under the tabs.
+        // If the main area is narrow, the tools go on a line below the tabs.
         let strip: Element<_> = if density == Density::Narrow {
             column![
                 tabs,
@@ -1501,7 +1529,7 @@ impl Session {
         let can_add = self.current.as_ref().is_some_and(|t| !t.is_view);
         let short = density != Density::Full;
         let mut tools = row![].spacing(8).align_y(Center);
-        // The row count is also in the status bar, so it goes first when space runs out.
+        // The status bar also shows the row count, so hide it here first.
         if density != Density::Narrow || width >= 440.0 {
             tools = tools.push(
                 text(range)
@@ -1598,7 +1626,7 @@ impl Session {
 
         let fields = Column::with_children(columns.iter().zip(&ins.fields).enumerate().map(
             |(i, (col, field))| {
-                // The name keeps most of the line; the type takes what is left.
+                // The column name gets most of the line. The type gets the rest.
                 let mut label = row![
                     fit(col.name.as_str())
                         .font(theme::LABEL)
@@ -1687,7 +1715,7 @@ impl Session {
             ]
             .spacing(8);
             if ins.row.is_some() && ins.confirm_delete {
-                // The confirmation gets its own line, so a narrow panel still fits it.
+                // The confirmation has its own line, so that it fits in a narrow panel.
                 confirm = Some(
                     row![
                         fit("Delete this row?")
@@ -1797,16 +1825,17 @@ fn connect(config: Config) -> Task<Message> {
 fn write(db: Db, sql: String, done: String) -> Task<Message> {
     Task::perform(db::execute(db, sql), move |r| {
         Message::RowWritten(match r {
-            Ok(rs) if rs.affected == Some(0) => {
-                Err("No row matched. It may have changed since this page loaded.".into())
-            }
+            Ok(rs) if rs.affected == Some(0) => Err(
+                "No row matched. If the row changed after this page loaded, reload the page."
+                    .into(),
+            ),
             Ok(_) => Ok(done.clone()),
             Err(e) => Err(e),
         })
     })
 }
 
-/// Asks where to save, then writes the rows as CSV or JSON, by the file's extension.
+/// Asks where to save, then writes CSV or JSON as the file extension tells.
 fn export(
     name: String,
     rows: impl std::future::Future<Output = Result<ResultSet, String>> + Send + 'static,
@@ -1824,16 +1853,20 @@ fn export(
     )
 }
 
-/// Expand `~/` in file paths and trim stray whitespace.
+/// Expands `~/` in file paths and removes spaces at the ends.
 fn normalized(config: &Config) -> Config {
     let mut c = config.clone();
-    for path in [&mut c.path, &mut c.ca_file] {
-        *path = path.trim().to_string();
-        if let (Some(rest), Some(home)) = (path.strip_prefix("~/"), dirs_next::home_dir()) {
-            *path = home.join(rest).to_string_lossy().into_owned();
-        }
-    }
+    c.path = normalized_path(&c.path);
+    c.ca_file = normalized_path(&c.ca_file);
     c
+}
+
+fn normalized_path(path: &str) -> String {
+    let path = path.trim();
+    match (path.strip_prefix("~/"), dirs_next::home_dir()) {
+        (Some(rest), Some(home)) => home.join(rest).to_string_lossy().into_owned(),
+        _ => path.to_string(),
+    }
 }
 
 fn file_stem(path: &str) -> String {
@@ -1855,8 +1888,8 @@ fn thousands(n: u64) -> String {
     out
 }
 
-/// Lead a database error with a plain sentence when the cause is a common one;
-/// the driver's own words follow on the next line.
+/// Puts a plain sentence before a database error if the cause is a usual one.
+/// The text from the driver follows on the next line.
 fn explain(error: &str) -> String {
     let lower = error.to_lowercase();
     let plain = if lower.contains("foreign key") {
@@ -1866,7 +1899,7 @@ fn explain(error: &str) -> String {
     } else if lower.contains("not null") || lower.contains("null value") {
         "A required column is empty."
     } else if lower.contains("invalid input syntax") || lower.contains("datatype mismatch") {
-        "A value does not fit its column's type."
+        "A value does not match the type of its column."
     } else {
         return error.to_string();
     };
@@ -1891,7 +1924,7 @@ fn millis(d: std::time::Duration) -> String {
 
 // ---------- small views ----------
 
-/// The app icon, decoded once.
+/// The app icon, read once.
 static ICON: std::sync::LazyLock<svg::Handle> =
     std::sync::LazyLock::new(|| svg::Handle::from_memory(theme::ICON_SVG));
 
@@ -1971,7 +2004,7 @@ fn small_key<'a>(
     on_press: Option<Message>,
 ) -> Element<'a, Message> {
     button(
-        // A key's label never wraps; the layouts around keys give way instead.
+        // A key label never wraps. The layout around the key gets smaller instead.
         container(
             text(label)
                 .font(theme::BODY_MEDIUM)
@@ -2012,6 +2045,55 @@ fn input<'a>(
         .style(theme::field)
 }
 
+/// A path field with a Browse key that opens the system file dialog.
+fn with_browse<'a>(
+    field: text_input::TextInput<'a, Message>,
+    browse: Message,
+) -> Element<'a, Message> {
+    row![
+        field.width(Fill),
+        small_key("Browse", theme::key, Some(browse))
+    ]
+    .spacing(8)
+    .align_y(Center)
+    .into()
+}
+
+#[derive(Debug, Clone, Copy)]
+enum FileField {
+    Database,
+    CaFile,
+}
+
+/// Opens the system file dialog in the folder of the current path, if any.
+fn pick_file(field: FileField, current: &str) -> Task<Message> {
+    let mut dialog = rfd::AsyncFileDialog::new();
+    dialog = match field {
+        // SQLite files often have no extension, so the dialog shows all files.
+        FileField::Database => dialog.set_title("Choose a SQLite database"),
+        FileField::CaFile => dialog
+            .set_title("Choose a CA certificate")
+            .add_filter("Certificates", &["pem", "crt", "cer"]),
+    };
+    let folder = std::path::Path::new(normalized_path(current).as_str())
+        .parent()
+        .filter(|p| p.is_dir())
+        .map(std::path::Path::to_path_buf)
+        .or_else(dirs_next::home_dir);
+    if let Some(folder) = folder {
+        dialog = dialog.set_directory(folder);
+    }
+    Task::perform(
+        async move {
+            dialog
+                .pick_file()
+                .await
+                .map(|file| file.path().display().to_string())
+        },
+        move |path| Message::FilePicked(field, path),
+    )
+}
+
 fn labelled<'a>(label: &'a str, field: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     column![
         text(label)
@@ -2033,7 +2115,7 @@ fn muted<'a>(s: impl text::IntoFragment<'a>) -> Element<'a, Message> {
         .into()
 }
 
-/// An error: a plain first line when there is one, the database's words in mono.
+/// An error box. A plain sentence comes first if there is one, then the database text.
 fn error_note<'a>(message: &str) -> Element<'a, Message> {
     let body: Element<_> = match message.split_once('\n') {
         Some((plain, raw)) => column![
@@ -2094,18 +2176,18 @@ fn empty_state_error<'a>(e: &str) -> Element<'a, Message> {
     .into()
 }
 
-/// How much room the main area has, which sets how much its toolbar shows.
+/// The width class of the main area. It sets what the toolbar shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Density {
-    /// Everything, with full labels.
+    /// All controls, with full labels.
     Full,
-    /// Shorter labels, fewer hints.
+    /// Shorter labels and fewer hints.
     Compact,
-    /// The toolbar moves to its own line under the tabs.
+    /// The toolbar is on its own line below the tabs.
     Narrow,
 }
 
-/// Column widths for the session screen, from the width it has.
+/// The column widths of the session screen, from the window width.
 #[derive(Debug, Clone, Copy)]
 struct Widths {
     sidebar: f32,
@@ -2138,10 +2220,10 @@ impl Widths {
     }
 }
 
-// ---------- screenshots for design review (cargo run --features shot) ----------
+// ---------- screenshots for testing (cargo run --features shot) ----------
 
-/// `SQLSEA_SCRIPT="table:users;row:2;shot:/tmp/a.png;quit"` drives the app
-/// one step a second and captures the window.
+/// `SQLSEA_SCRIPT="table:users;row:2;shot:/tmp/a.png;quit"` runs one step
+/// every 1.2 seconds and saves screenshots of the window.
 #[cfg(feature = "shot")]
 fn script() -> Task<Message> {
     let Ok(script) = std::env::var("SQLSEA_SCRIPT") else {
@@ -2163,6 +2245,12 @@ fn script() -> Task<Message> {
             "sql" => Some(Message::SetSql(arg.replace("\\n", "\n"))),
             "run" => Some(Message::Run),
             "pick" => arg.parse().ok().map(Message::PickSaved),
+            "kind" => Some(Message::FormKind(if arg == "sqlite" {
+                Kind::Sqlite
+            } else {
+                Kind::Postgres
+            })),
+            "connect" => Some(Message::Connect),
             "mode" => Some(Message::SetAppearance(match arg {
                 "dark" => Appearance::Dark,
                 "light" => Appearance::Light,

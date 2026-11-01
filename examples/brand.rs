@@ -1,9 +1,9 @@
 //! Builds the brand kit from `brand/source`: `cargo run --example brand`.
 //!
-//! Writes every source to `brand/svg` with its text turned into outlines, so
-//! the files render the same on machines without the fonts, renders the PNGs
-//! into `brand/png`, and packs the app icon as `brand/icon.ico` (Windows) and
-//! `brand/icon.icns` (macOS).
+//! It writes each source to `brand/svg` with its text as outlines, so that the
+//! files look the same on computers without the fonts. It also writes the PNG
+//! files to `brand/png`, and the app icon as `brand/icon.ico` for Windows and
+//! `brand/icon.icns` for macOS.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -17,8 +17,8 @@ const FONTS: [&[u8]; 5] = [
     include_bytes!("../assets/fonts/JetBrainsMono-Regular.ttf"),
 ];
 
-/// Source name, then the pixel widths to render it at. Icons get square files
-/// named by size; everything else is named by width.
+/// Each source, and the widths in pixels of its PNG files. Icon files are
+/// square and named by size. The other files are named by width.
 const RENDERS: &[(&str, &[u32])] = &[
     ("icon-small", &[16, 24, 32]),
     ("icon", &[48, 64, 128, 256, 512, 1024]),
@@ -37,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(root.join("svg"))?;
     fs::create_dir_all(root.join("png"))?;
 
-    // App icon renders by size, for the Windows and macOS icon files.
+    // The app icon PNG files by size, for the Windows and macOS icon files.
     let mut icons: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
 
     let mut options = resvg::usvg::Options::default();
@@ -86,7 +86,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// A Windows icon holding PNG images, which Windows reads at every size.
+/// A Windows icon that holds PNG images, one for each size.
 fn ico(icons: &BTreeMap<u32, Vec<u8>>, sizes: &[u32]) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend(0u16.to_le_bytes()); // reserved
@@ -97,7 +97,7 @@ fn ico(icons: &BTreeMap<u32, Vec<u8>>, sizes: &[u32]) -> Vec<u8> {
         let png = &icons[size];
         let side = if *size >= 256 { 0 } else { *size as u8 }; // 0 means 256
         out.extend([side, side, 0, 0]);
-        out.extend(1u16.to_le_bytes()); // colour planes
+        out.extend(1u16.to_le_bytes()); // color planes
         out.extend(32u16.to_le_bytes()); // bits per pixel
         out.extend((png.len() as u32).to_le_bytes());
         out.extend(offset.to_le_bytes());
@@ -109,7 +109,7 @@ fn ico(icons: &BTreeMap<u32, Vec<u8>>, sizes: &[u32]) -> Vec<u8> {
     out
 }
 
-/// A macOS icon: one PNG per slot, each slot a size at 1x or 2x.
+/// A macOS icon: one PNG image for each slot, at 1x or 2x scale.
 fn icns(icons: &BTreeMap<u32, Vec<u8>>) -> Vec<u8> {
     const SLOTS: [(&[u8; 4], u32); 11] = [
         (b"icp4", 16),

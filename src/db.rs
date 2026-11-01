@@ -1,5 +1,5 @@
-//! Database access. Every value comes back as text (or NULL), which is what a
-//! client that shows and edits arbitrary tables needs.
+//! Database access. Every value comes back as text or NULL, so that the app
+//! can show and edit a table of any type.
 
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-/// Rows kept from an ad-hoc query; the rest are counted but not held.
+/// The most rows that the app keeps from a query. It counts the rest.
 const MAX_ROWS: usize = 5_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -26,17 +26,17 @@ impl Kind {
     }
 }
 
-/// How a PostgreSQL connection uses TLS. The modes follow libpq's `sslmode`.
+/// How a PostgreSQL connection uses TLS. The modes match `sslmode` in libpq.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Tls {
     /// Plain TCP.
     Off,
-    /// TLS when the server offers it, plain otherwise; the certificate is not checked.
+    /// TLS if the server supports it. The certificate is not checked.
     #[default]
     Prefer,
-    /// TLS always; the certificate is not checked.
+    /// TLS always. The certificate is not checked.
     Require,
-    /// TLS always, with the certificate chain and host name checked.
+    /// TLS always. The certificate chain and the host name are checked.
     Verify,
 }
 
@@ -66,7 +66,7 @@ impl Tls {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Config {
-    /// Stable key for this connection's password in the system keyring.
+    /// The key for the password of this connection in the system keyring.
     #[serde(default)]
     pub id: String,
     pub name: String,
@@ -77,28 +77,28 @@ pub struct Config {
     pub port: String,
     #[serde(default)]
     pub user: String,
-    /// Kept in the system keyring, never in the config file. Still read from
-    /// the file so older files that held it can be migrated.
+    /// Kept in the system keyring, never in the configuration file. It is read
+    /// from the file only to move passwords out of files from older versions.
     #[serde(default, skip_serializing)]
     pub password: String,
     #[serde(default)]
     pub tls: Tls,
-    /// Extra trusted certificate(s), PEM, for `Tls::Verify`.
+    /// A PEM file with more trusted certificates, for `Tls::Verify`.
     #[serde(default)]
     pub ca_file: String,
     #[serde(default)]
     pub database: String,
     #[serde(default)]
     pub path: String,
-    /// Seconds a query from the Query tab may run before it is cancelled;
-    /// empty for no limit.
+    /// The seconds that a query from the Query tab can run before it is
+    /// cancelled. Empty means no limit.
     #[serde(default)]
     pub timeout: String,
 }
 
 impl Config {
-    /// The query time limit, if one is set. Errors when the field is not a
-    /// positive whole number of seconds.
+    /// The query time limit, if there is one. Returns an error if the value is
+    /// not a positive whole number.
     pub fn timeout_secs(&self) -> Result<Option<u64>, String> {
         let t = self.timeout.trim();
         if t.is_empty() {
@@ -141,7 +141,7 @@ pub enum Db {
 
 pub struct Sqlite {
     conn: Mutex<rusqlite::Connection>,
-    /// Stops a running statement from another thread.
+    /// Stops a running statement from a different thread.
     interrupt: rusqlite::InterruptHandle,
 }
 
@@ -158,9 +158,9 @@ impl fmt::Debug for Db {
 pub struct ResultSet {
     pub columns: Vec<String>,
     pub rows: Vec<Vec<Option<String>>>,
-    /// Rows changed by the last statement, when it was not a query.
+    /// The rows that the last statement changed, if it was not a query.
     pub affected: Option<u64>,
-    /// Rows the query returned beyond `MAX_ROWS`.
+    /// The rows after `MAX_ROWS` that the app did not keep.
     pub dropped: usize,
     pub elapsed: Duration,
 }
@@ -209,7 +209,7 @@ pub fn literal(value: Option<&str>) -> String {
     }
 }
 
-/// An open connection, and whether its traffic is encrypted (PostgreSQL only).
+/// An open connection, and if its traffic is encrypted (PostgreSQL only).
 #[derive(Debug, Clone)]
 pub struct Connected {
     pub db: Db,
@@ -240,8 +240,8 @@ pub async fn connect(config: Config) -> Result<Connected, String> {
                 pg.password(&config.password);
             }
 
-            // The two connectors give different stream types, so each branch
-            // spawns its own connection driver.
+            // The two connectors make different stream types, so each branch
+            // starts its own connection task.
             let client = if config.tls == Tls::Off {
                 let (client, connection) =
                     pg.connect(tokio_postgres::NoTls).await.map_err(pg_error)?;
@@ -279,10 +279,10 @@ pub async fn connect(config: Config) -> Result<Connected, String> {
                 return Err("Choose a database file.".into());
             }
             blocking(move || {
-                let conn = rusqlite::Connection::open(&path).map_err(|e| e.to_string())?;
-                // Opening never fails on a bad file; reading the schema does.
+                let conn = rusqlite::Connection::open(&path).map_err(sqlite_open_error)?;
+                // SQLite opens any file without an error. The first read finds a bad file.
                 conn.query_row("select count(*) from sqlite_master", [], |_| Ok(()))
-                    .map_err(|e| e.to_string())?;
+                    .map_err(sqlite_open_error)?;
                 let interrupt = conn.get_interrupt_handle();
                 Ok(Connected {
                     db: Db::Sqlite(Arc::new(Sqlite {
@@ -419,18 +419,18 @@ pub async fn page(
     Ok(Page { result, total })
 }
 
-/// Run any SQL. Several statements may be given; the last one that returns
-/// rows is the result, up to `MAX_ROWS` of it.
+/// Runs any SQL. If there are many statements, the result is from the last
+/// statement that returns rows, up to `MAX_ROWS` rows.
 pub async fn execute(db: Db, sql: String) -> Result<ResultSet, String> {
     execute_capped(db, sql, MAX_ROWS).await
 }
 
-/// Like `execute`, but keeps every row. For exports.
+/// Like `execute`, but keeps all rows. Exports use it.
 pub async fn execute_all(db: Db, sql: String) -> Result<ResultSet, String> {
     execute_capped(db, sql, usize::MAX).await
 }
 
-/// Like `execute`, cancelling the query if it outlasts the connection's time limit.
+/// Like `execute`. Cancels the query if it runs longer than the time limit.
 pub async fn execute_limited(db: Db, config: Config, sql: String) -> Result<ResultSet, String> {
     let Some(secs) = config.timeout_secs()? else {
         return execute(db, sql).await;
@@ -467,7 +467,7 @@ pub async fn cancel(db: Db, config: Config) -> Result<(), String> {
     }
 }
 
-/// Whether an error is the database reporting a cancelled query.
+/// True if the error tells that the query was cancelled.
 pub fn is_cancelled(error: &str) -> bool {
     error.contains("canceling statement due to user request") || error == "interrupted"
 }
@@ -572,51 +572,113 @@ async fn blocking<T: Send + 'static>(
 }
 
 fn pg_error(e: tokio_postgres::Error) -> String {
-    match e.as_db_error() {
+    use tokio_postgres::error::SqlState;
+
+    let (raw, plain) = match e.as_db_error() {
         Some(db) => {
-            let mut s = db.message().to_string();
+            let mut raw = db.message().to_string();
             if let Some(detail) = db.detail() {
-                s.push_str(". ");
-                s.push_str(detail);
+                raw.push_str(". ");
+                raw.push_str(detail);
             }
-            s
+            let plain = match db.code() {
+                c if *c == SqlState::INVALID_PASSWORD
+                    || *c == SqlState::INVALID_AUTHORIZATION_SPECIFICATION =>
+                {
+                    Some(
+                        "The server did not accept the user name or password. Correct them and connect again.",
+                    )
+                }
+                c if *c == SqlState::UNDEFINED_DATABASE => {
+                    Some("No database with this name is on the server. Correct the database name.")
+                }
+                _ => None,
+            };
+            (raw, plain)
         }
         None => {
-            let mut s = e.to_string();
+            let mut raw = e.to_string();
             let mut source = std::error::Error::source(&e);
             while let Some(inner) = source {
-                s = format!("{s}: {inner}");
+                raw = format!("{raw}: {inner}");
                 source = inner.source();
             }
-            match tls_hint(&s) {
-                Some(plain) => format!("{plain}\n{s}"),
-                None => s,
-            }
+            let plain = connection_hint(&raw);
+            (raw, plain)
         }
+    };
+    with_hint(plain, raw)
+}
+
+/// Puts a plain sentence before the error text from the driver.
+fn with_hint(plain: Option<&str>, raw: String) -> String {
+    match plain {
+        Some(plain) => format!("{plain}\n{raw}"),
+        None => raw,
     }
 }
 
-/// A plain sentence for the TLS failures people actually hit.
-fn tls_hint(error: &str) -> Option<&'static str> {
-    if error.contains("UnknownIssuer") {
+/// A plain sentence for the usual reasons that a connection fails.
+fn connection_hint(error: &str) -> Option<&'static str> {
+    let hints = [
+        (
+            "UnknownIssuer",
+            "The server certificate is not signed by an authority that this computer trusts. \
+             Add the CA certificate file of your provider, or choose Required.",
+        ),
+        (
+            "NotValidForName",
+            "The server certificate is for a different host name. \
+             Connect with the host name that is on the certificate.",
+        ),
+        (
+            "Expired",
+            "The server certificate expired. Ask the owner of the server to renew it.",
+        ),
+        (
+            "server does not support TLS",
+            "The server does not accept TLS. Choose If available or Off.",
+        ),
+        (
+            "Connection refused",
+            "Nothing answered at this host and port. \
+             Make sure that the server runs and that the port is correct.",
+        ),
+        (
+            "failed to lookup address",
+            "The host name was not found. Correct the host name.",
+        ),
+        (
+            "timed out",
+            "The server did not answer in time. \
+             Make sure that the host is correct and that no firewall blocks the port.",
+        ),
+    ];
+    hints
+        .into_iter()
+        .find(|(needle, _)| error.contains(needle))
+        .map(|(_, plain)| plain)
+}
+
+/// A plain sentence for SQLite files that do not open.
+fn sqlite_open_error(e: rusqlite::Error) -> String {
+    let raw = e.to_string();
+    let plain = if raw.contains("unable to open database file") {
         Some(
-            "The server's certificate is not signed by an authority this computer trusts. \
-             Add the provider's CA certificate file, or choose Required.",
+            "The database file did not open. \
+             Make sure that the folder exists and that you can read and write the file.",
         )
-    } else if error.contains("NotValidForName") {
-        Some("The server's certificate is for a different host name.")
-    } else if error.contains("Expired") {
-        Some("The server's certificate has expired.")
-    } else if error.contains("server does not support TLS") {
-        Some("The server does not accept TLS. Choose If available or Off.")
+    } else if raw.contains("file is not a database") {
+        Some("This file is not a SQLite database. Choose a different file.")
     } else {
         None
-    }
+    };
+    with_hint(plain, raw)
 }
 
 // ---------- row writes ----------
 
-/// `WHERE` clause pinning one row by its primary key.
+/// The `WHERE` clause that finds one row by its primary key.
 fn key_clause(columns: &[Column], original: &[Option<String>]) -> Option<String> {
     let parts: Vec<String> = columns
         .iter()
@@ -767,7 +829,7 @@ mod tests {
         cancel(db.clone(), memory()).await.unwrap();
         let error = running.await.unwrap().unwrap_err();
         assert!(is_cancelled(&error), "{error}");
-        // The connection is usable afterwards.
+        // The connection works after the cancel.
         assert_eq!(execute(db, "select 1".into()).await.unwrap().rows.len(), 1);
     }
 
@@ -791,7 +853,7 @@ mod tests {
         assert!(bad.timeout_secs().is_err());
     }
 
-    /// Needs live servers, so it only runs when asked:
+    /// Needs live servers. Run it with:
     /// `SQLSEA_TLS_PORT=55433 SQLSEA_TLS_CA=ca.crt SQLSEA_PLAIN_PORT=55432 cargo test -- --ignored`
     #[tokio::test]
     #[ignore]
@@ -846,7 +908,7 @@ mod tests {
             .unwrap_err();
         assert!(missing.contains("Could not read the CA"), "{missing}");
 
-        // A running query can be cancelled, over plain TCP and over verified TLS.
+        // Cancel a running query over plain TCP and over verified TLS.
         for config in [
             pg(plain.clone(), "localhost", Tls::Off, ""),
             pg(tls.clone(), "localhost", Tls::Verify, &ca),

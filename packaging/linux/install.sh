@@ -1,13 +1,13 @@
 #!/bin/sh
-# Installs sqlsea for the current user: the binary, its icons and a launcher entry.
-# Works from an unpacked release (sqlsea beside this script) or from the source
-# tree after `cargo build --release`, started from any folder.
-# Undo with `install.sh --remove`.
+# Installs sqlsea, its icons and a launcher entry for the current user.
+# Run it in an unpacked package, or in the source tree after
+# `cargo build --release`. You can start it from any folder.
+# To remove sqlsea, run `install.sh --remove`.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
 if [ -f "$here/sqlsea" ]; then
-    # An unpacked release.
+    # An unpacked package.
     app="$here/sqlsea"
     png="$here/icons/icon-"
     svg="$here/icons/icon.svg"
@@ -41,8 +41,8 @@ for s in $SIZES; do
     install -Dm644 "$png$s.png" "$ICONS/${s}x${s}/apps/sqlsea.png"
 done
 install -Dm644 "$svg" "$ICONS/scalable/apps/sqlsea.svg"
-# The desktop session's PATH often lacks ~/.local/bin, and launchers hide
-# entries whose program they cannot find, so point at the binary directly.
+# The PATH of the desktop session often does not have ~/.local/bin. Launchers
+# hide an entry if they cannot find its program, so use the full path.
 mkdir -p "$APPS"
 sed -e "s|^Exec=sqlsea|Exec=$BIN/sqlsea|" -e "s|^TryExec=.*|TryExec=$BIN/sqlsea|" \
     "$desktop" > "$APPS/sqlsea.desktop"

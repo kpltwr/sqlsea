@@ -1,9 +1,8 @@
-//! The window's own title bar controls and resize edges, used on Linux.
+//! The title bar controls and resize edges that sqlsea draws on Linux.
 //!
-//! Wayland desktops such as GNOME leave the title bar to the app, and the frame
-//! winit draws can only be stock light or dark, so it never matches sqlsea's
-//! palette. On Linux the app's top bar becomes the title bar instead. macOS and
-//! Windows keep their native title bars, which follow the app's theme.
+//! On Wayland, the app must draw its own title bar. The title bar that winit
+//! draws does not use the colors of sqlsea, so on Linux the top bar of the app
+//! is the title bar. macOS and Windows keep their own title bars.
 
 use iced::widget::{button, column, container, mouse_area, row, space, stack, svg};
 use iced::window::{self, Direction};
@@ -14,7 +13,7 @@ use crate::theme;
 /// Whether the app draws its own title bar.
 pub const CUSTOM: bool = cfg!(target_os = "linux");
 
-/// Width of the invisible grips along the window's edges.
+/// The width of the invisible resize edges, in pixels.
 const GRIP: f32 = 5.0;
 
 #[derive(Debug, Clone, Copy)]
@@ -36,7 +35,7 @@ pub fn perform<T: Send + 'static>(action: Action) -> Task<T> {
     })
 }
 
-/// Makes a title bar draggable, and maximizable with a double click.
+/// Lets the user drag the title bar, and double-click it to maximize.
 pub fn title_bar<'a, M: Clone + 'a>(
     bar: Element<'a, M>,
     on_action: fn(Action) -> M,
@@ -80,7 +79,7 @@ pub fn controls<'a, M: Clone + 'a>(on_action: fn(Action) -> M) -> Option<Element
     )
 }
 
-/// Draws a hairline around the window and adds resize grips at its edges.
+/// Draws a thin border around the window and adds the resize edges.
 pub fn frame<'a, M: Clone + 'a>(
     content: Element<'a, M>,
     on_action: fn(Action) -> M,

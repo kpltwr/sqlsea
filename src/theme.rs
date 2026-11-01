@@ -1,7 +1,7 @@
-//! Every colour, font and size in the app goes through this file.
+//! All colors, fonts and sizes of the app are in this file.
 //!
-//! Colours come in a light and a dark set; style functions pick the set that
-//! matches the active `Theme`, so views never name a colour directly.
+//! There is a light and a dark set of colors. Each style function uses the set
+//! for the active `Theme`. Views use these functions and do not name colors.
 
 use iced::border::{self, Radius};
 use iced::font::{Family, Weight};
@@ -13,7 +13,6 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color {
 }
 
 pub struct Colors {
-    // Ground and text: cool neutrals, blue-grey hairlines.
     pub paper: Color,
     pub paper2: Color,
     pub paper3: Color,
@@ -27,7 +26,7 @@ pub struct Colors {
     pub graphite_ink: Color,
     pub graphite_muted: Color,
     pub graphite_select: Color,
-    // The one signal.
+    // The accent color, for the primary action, the selection and state.
     pub accent: Color,
     pub accent2: Color,
     pub accent_soft: Color,
@@ -37,11 +36,11 @@ pub struct Colors {
     pub accent_press: Color,
     pub accent_edge: Color,
     pub accent_ink: Color,
-    // Keycaps.
+    // Buttons.
     pub key_face: Color,
     pub key_hover: Color,
     pub key_edge: Color,
-    // State.
+    // Errors and success.
     pub error: Color,
     pub error_solid: Color,
     pub error_wash: Color,
@@ -114,7 +113,7 @@ pub const DARK: Colors = Colors {
     shadow: Color::from_rgba8(0x00, 0x00, 0x00, 0.35),
 };
 
-/// The colour set for the active theme.
+/// The color set for the active theme.
 pub fn colors(theme: &Theme) -> &'static Colors {
     if theme.extended_palette().is_dark {
         &DARK
@@ -138,8 +137,8 @@ pub fn app_theme(dark: bool) -> Theme {
     )
 }
 
-// Faces: Familjen Grotesk for heads and labels, IBM Plex Sans for UI text,
-// JetBrains Mono for SQL and machine values.
+// Fonts: Familjen Grotesk for headings and labels, IBM Plex Sans for other
+// text, and JetBrains Mono for SQL and data.
 pub const BODY: Font = Font::with_name("IBM Plex Sans");
 pub const BODY_MEDIUM: Font = Font {
     weight: Weight::Medium,
@@ -167,14 +166,14 @@ pub const FONTS: [&[u8]; 5] = [
 /// The app icon, drawn in the top bar.
 pub const ICON_SVG: &[u8] = include_bytes!("../brand/svg/icon.svg");
 
-// Type scale, ratio about 1.125.
+// Text sizes. Each size is about 1.125 times the one before it.
 pub const TEXT_XS: f32 = 12.0;
 pub const TEXT_SM: f32 = 13.0;
 pub const TEXT_MD: f32 = 14.0;
 pub const TEXT_LG: f32 = 16.0;
 pub const TEXT_XL: f32 = 20.0;
 
-// Mono advance at TEXT_SM, for sizing grid columns.
+// The width of one mono character at TEXT_SM, for grid columns.
 pub const MONO_ADVANCE: f32 = 7.85;
 
 pub const RADIUS_INPUT: f32 = 6.0;
@@ -219,7 +218,7 @@ pub fn text_muted(theme: &Theme) -> text::Style {
     tinted(colors(theme).muted)
 }
 
-/// Cobalt text: the solid accent on light ground, the lighter one on dark.
+/// Accent text. It uses the lighter accent on dark backgrounds.
 pub fn text_accent(theme: &Theme) -> text::Style {
     let c = colors(theme);
     tinted(if theme.extended_palette().is_dark {
@@ -319,7 +318,7 @@ pub fn skeleton(theme: &Theme) -> container::Style {
     }
 }
 
-/// A hairline around the whole window, which draws its own frame on Linux.
+/// A thin border around the window, for the title bar that the app draws on Linux.
 pub fn window_frame(theme: &Theme) -> container::Style {
     let c = colors(theme);
     container::Style {
@@ -330,7 +329,7 @@ pub fn window_frame(theme: &Theme) -> container::Style {
 
 // ---------- buttons ----------
 
-/// A keycap: key face on a hard bottom edge that sinks when pressed.
+/// A button with a darker bottom edge that goes away when the button is pressed.
 pub fn key(theme: &Theme, status: button::Status) -> button::Style {
     let c = colors(theme);
     let base = button::Style {
@@ -363,7 +362,7 @@ pub fn key(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
-/// The one solid cobalt key per view.
+/// The primary button. Each view has one at most.
 pub fn key_primary(theme: &Theme, status: button::Status) -> button::Style {
     let c = colors(theme);
     let base = button::Style {
@@ -384,12 +383,12 @@ pub fn key_primary(theme: &Theme, status: button::Status) -> button::Style {
             shadow: Shadow::default(),
             ..base
         },
-        // Cobalt is spent only on what can be pressed; a dormant primary is a plain key.
+        // A disabled primary button looks like a normal button, so the accent color marks only actions that work.
         button::Status::Disabled => key(theme, status),
     }
 }
 
-/// The armed second step of a destructive action.
+/// The second step of a delete, after the user confirms.
 pub fn key_danger_armed(theme: &Theme, status: button::Status) -> button::Style {
     let c = colors(theme);
     let base = button::Style {
@@ -412,7 +411,7 @@ pub fn key_danger_armed(theme: &Theme, status: button::Status) -> button::Style 
     }
 }
 
-/// A destructive key: same keycap, error ink.
+/// A delete button: a normal button with error-colored text.
 pub fn key_danger(theme: &Theme, status: button::Status) -> button::Style {
     let c = colors(theme);
     button::Style {
@@ -425,7 +424,7 @@ pub fn key_danger(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
-/// A key on the sunken tray; the chosen one is pressed in.
+/// An option in a group of options. The chosen option looks pressed.
 pub fn tray_key(chosen: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let c = colors(theme);
@@ -454,7 +453,7 @@ pub fn tray_key(chosen: bool) -> impl Fn(&Theme, button::Status) -> button::Styl
     }
 }
 
-/// Quiet text-only control: tabs, list rows, inline actions.
+/// A text-only button, for tabs, list rows and small actions.
 pub fn ghost(theme: &Theme, status: button::Status) -> button::Style {
     let c = colors(theme);
     let base = button::Style {
@@ -483,7 +482,7 @@ pub fn ghost(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
-/// A row in a list (sidebar table, saved connection). Selection is the cobalt wash.
+/// A row in a list, such as a table or a saved connection.
 pub fn list_row(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let c = colors(theme);
@@ -501,7 +500,7 @@ pub fn list_row(selected: bool) -> impl Fn(&Theme, button::Status) -> button::St
     }
 }
 
-/// A data row in the grid: square, full-bleed, wash when chosen.
+/// A row of data in the grid.
 pub fn grid_row(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let c = colors(theme);
@@ -523,7 +522,7 @@ pub fn grid_row(selected: bool) -> impl Fn(&Theme, button::Status) -> button::St
     }
 }
 
-/// Column head in the grid: clickable to sort.
+/// A column head in the grid. A click changes the sort.
 pub fn grid_head_button(theme: &Theme, status: button::Status) -> button::Style {
     let c = colors(theme);
     button::Style {
@@ -565,7 +564,7 @@ pub fn null_toggle(on: bool) -> impl Fn(&Theme, button::Status) -> button::Style
     }
 }
 
-/// Minimize, maximize and close in the title bar: round, quiet, close warms on hover.
+/// Minimize, maximize and close in the title bar. Close turns red on hover.
 pub fn window_button(close: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let c = colors(theme);
@@ -594,7 +593,7 @@ pub fn window_icon(theme: &Theme, _: svg::Status) -> svg::Style {
     }
 }
 
-/// A key that stays pressed in while its panel is open.
+/// A button that looks pressed while its panel is open.
 pub fn key_toggle(on: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let c = colors(theme);
@@ -617,7 +616,7 @@ pub fn query_strip(theme: &Theme) -> container::Style {
     fill(colors(theme).paper2)
 }
 
-/// A query tab; the open one takes the editor's graphite and joins it.
+/// A query tab. The open tab has the same color as the editor below it.
 pub fn query_tab(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let c = colors(theme);
@@ -642,7 +641,7 @@ pub fn query_tab(active: bool) -> impl Fn(&Theme, button::Status) -> button::Sty
     }
 }
 
-/// The small close mark inside a query tab.
+/// The close button in a query tab.
 pub fn query_tab_close(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let c = colors(theme);
@@ -668,7 +667,7 @@ pub fn query_tab_icon(active: bool) -> impl Fn(&Theme, svg::Status) -> svg::Styl
 
 // ---------- inputs ----------
 
-/// Fields keep a constant 1px border; focus turns it cobalt.
+/// Text fields. The border is 1 px and turns the accent color on focus.
 pub fn field(theme: &Theme, status: text_input::Status) -> text_input::Style {
     let c = colors(theme);
     let base = text_input::Style {
@@ -698,7 +697,7 @@ pub fn field(theme: &Theme, status: text_input::Status) -> text_input::Style {
     }
 }
 
-/// A field whose value differs from what the database holds.
+/// A field with a value that is different from the database.
 pub fn field_changed(theme: &Theme, status: text_input::Status) -> text_input::Style {
     let c = colors(theme);
     let s = field(theme, status);
@@ -712,7 +711,7 @@ pub fn field_changed(theme: &Theme, status: text_input::Status) -> text_input::S
     }
 }
 
-/// A multi-line field styled like its single-line siblings.
+/// A multi-line field with the style of the single-line fields.
 pub fn as_editor(
     field: fn(&Theme, text_input::Status) -> text_input::Style,
     theme: &Theme,

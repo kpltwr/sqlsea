@@ -1,8 +1,8 @@
-# Builds a Windows release of sqlsea into dist\: a zip holding sqlsea.exe
-# (one file, icon and fonts inside), install.ps1, the README and licences.
+# Makes a Windows package of sqlsea: dist\sqlsea-<version>-windows-<arch>.zip.
+# The zip holds sqlsea.exe, install.ps1, the README and the licenses.
 #
-# Needs the Rust MSVC toolchain and the Visual Studio C++ build tools, which
-# also provide the Windows SDK used to embed the icon.
+# You need the Rust MSVC toolchain and the Visual Studio C++ build tools.
+# The build tools include the Windows SDK, which puts the icon in sqlsea.exe.
 #
 #   powershell -ExecutionPolicy Bypass -File packaging\windows\package.ps1
 $ErrorActionPreference = 'Stop'

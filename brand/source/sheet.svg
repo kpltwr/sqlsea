@@ -38,7 +38,7 @@
   <use xlink:href="#icon" transform="translate(896 400) scale(0.25)"/>
   <text x="1048" y="500" font-family="Familjen Grotesk" font-weight="600" font-size="88" letter-spacing="-2.5" fill="#e3e8ee">sqlsea</text>
   <rect x="80" y="676" width="1440" height="1" fill="#dadee4"/>
-  <text x="80" y="736" font-family="Familjen Grotesk" font-weight="500" font-size="17" fill="#363e49">Colour</text>
+  <text x="80" y="736" font-family="Familjen Grotesk" font-weight="500" font-size="17" fill="#363e49">Color</text>
   <rect x="80" y="768" width="176" height="88" rx="6" fill="#0462d3"/>
   <text x="80" y="884" font-family="IBM Plex Sans" font-weight="500" font-size="15" fill="#111825">Cobalt</text>
   <text x="80" y="906" font-family="JetBrains Mono" font-size="13" fill="#5d646e">#0462d3</text>

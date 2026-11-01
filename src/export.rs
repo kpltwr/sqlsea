@@ -1,10 +1,10 @@
-//! Writing result sets out as CSV or JSON.
+//! Writes results as CSV or JSON.
 
 use std::path::{Path, PathBuf};
 
 use crate::db::ResultSet;
 
-/// The system's save dialog, offering CSV and JSON.
+/// Opens the save dialog of the system, with CSV and JSON as file types.
 pub async fn choose_file(name: &str) -> Option<PathBuf> {
     rfd::AsyncFileDialog::new()
         .set_title("Export")
@@ -54,8 +54,8 @@ pub fn csv(rs: &ResultSet) -> String {
     out
 }
 
-/// An array of objects keyed by column. Values stay text, as the database
-/// gave them; NULL is `null`.
+/// An array of objects, one key for each column. Values stay text, as the
+/// database gave them. NULL becomes `null`.
 pub fn json(rs: &ResultSet) -> String {
     let rows: Vec<serde_json::Map<String, serde_json::Value>> = rs
         .rows
@@ -77,7 +77,7 @@ pub fn json(rs: &ResultSet) -> String {
     serde_json::to_string_pretty(&rows).unwrap_or_default()
 }
 
-/// One row as tab-separated values, for pasting into a spreadsheet.
+/// One row as tab-separated values, to paste into a spreadsheet.
 pub fn tsv_row(row: &[Option<String>]) -> String {
     row.iter()
         .map(|v| v.as_deref().unwrap_or("").replace(['\t', '\n', '\r'], " "))

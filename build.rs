@@ -1,4 +1,4 @@
-// Embeds the app icon and version details in the Windows executable.
+// Puts the app icon and the product name in the Windows executable.
 fn main() {
     println!("cargo::rerun-if-changed=brand/icon.ico");
     #[cfg(windows)]

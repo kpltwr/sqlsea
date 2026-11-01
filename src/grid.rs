@@ -1,4 +1,4 @@
-//! The result grid: a pinned head over hairline-ruled rows, values in mono.
+//! The result grid. The column heads stay at the top when the rows scroll.
 
 use iced::widget::{
     Column, Row, button, column, container, responsive, row, scrollable, space, text,
@@ -15,7 +15,7 @@ const MAX_W: f32 = 360.0;
 /// Rows sampled when sizing columns.
 const SAMPLE: usize = 200;
 const MAX_CHARS: usize = 160;
-/// Width of an embedded scrollbar: 8 plus a margin either side.
+/// The width of the scrollbar, with its margins.
 const BAR: f32 = 10.0;
 
 pub struct Grid<'a, M> {
@@ -23,11 +23,11 @@ pub struct Grid<'a, M> {
     pub selected: Option<usize>,
     pub on_select: Option<fn(usize) -> M>,
     pub on_sort: Option<fn(usize) -> M>,
-    /// Column index and whether it sorts ascending.
+    /// The sort column, and true for ascending order.
     pub sort: Option<(usize, bool)>,
-    /// Widget ids of the body and of the head that follows it sideways.
+    /// The widget ids of the rows and of the column heads.
     pub ids: (&'static str, &'static str),
-    /// Reports the body's horizontal offset so the head can follow.
+    /// Sends the horizontal scroll position of the rows, so that the heads can move with them.
     pub on_scroll: fn(&'static str, f32) -> M,
 }
 
@@ -46,7 +46,7 @@ fn widths(rs: &ResultSet) -> Vec<f32> {
                         .map_or(4, |v| first_line(v).0.chars().count())
                 })
                 .max()
-                // One spare character, matching the margin cells keep for "…".
+                // Add one character, because each cell keeps one character free for "…".
                 .map_or(0, |n| n + 1) as f32
                 * theme::MONO_ADVANCE;
             (head.max(body) + PAD_X * 2.0).clamp(MIN_W, MAX_W)
@@ -54,7 +54,7 @@ fn widths(rs: &ResultSet) -> Vec<f32> {
         .collect()
 }
 
-/// The first line of a value, clipped, and whether anything was cut.
+/// The first line of a value, cut to `MAX_CHARS`, and true if text was cut.
 fn first_line(value: &str) -> (&str, bool) {
     let line = value.lines().next().unwrap_or("");
     let cut = line.char_indices().nth(MAX_CHARS).map(|(i, _)| i);
@@ -78,7 +78,7 @@ pub fn view<'a, M: Clone + 'a>(grid: Grid<'a, M>) -> Element<'a, M> {
 
     responsive(move |size| {
         let mut widths = base.clone();
-        // The vertical scrollbar takes its own strip, so rows never run under it.
+        // The vertical scrollbar has its own space, so that it does not cover rows.
         let room = size.width - BAR;
         let total: f32 = widths.iter().sum();
         if total < room
@@ -117,8 +117,8 @@ pub fn view<'a, M: Clone + 'a>(grid: Grid<'a, M>) -> Element<'a, M> {
             let cells = Row::with_children(values.iter().enumerate().map(|(i, v)| {
                 let cell: Element<'a, M> = match v {
                     Some(v) => {
-                        // Mono glyphs share one advance, so counting characters
-                        // is exact enough; one spare keeps "…" off the edge.
+                        // All mono characters have the same width, so a character
+                        // count is accurate. One character stays free for "…".
                         let (line, cut) = first_line(v);
                         let fits =
                             (((widths[i] - PAD_X * 2.0) / theme::MONO_ADVANCE) as usize).max(2) - 1;
@@ -199,7 +199,7 @@ pub fn view<'a, M: Clone + 'a>(grid: Grid<'a, M>) -> Element<'a, M> {
     .into()
 }
 
-/// Loading state: bars in the shape of the rows that are coming.
+/// The loading state: gray bars in the shape of rows.
 pub fn skeleton<'a, M: 'a>() -> Element<'a, M> {
     const SHAPES: [[f32; 4]; 4] = [
         [48.0, 140.0, 96.0, 180.0],

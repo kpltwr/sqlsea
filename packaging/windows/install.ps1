@@ -1,6 +1,6 @@
-# Installs sqlsea for the current user: copies sqlsea.exe to
-# %LOCALAPPDATA%\Programs\sqlsea and adds it to the Start menu.
-# No administrator rights needed. Undo with -Remove.
+# Installs sqlsea for the current user. It copies sqlsea.exe to
+# %LOCALAPPDATA%\Programs\sqlsea and adds sqlsea to the Start menu.
+# You do not need administrator rights. To remove sqlsea, use -Remove.
 #
 #   powershell -ExecutionPolicy Bypass -File install.ps1 [-Remove]
 param([switch]$Remove)

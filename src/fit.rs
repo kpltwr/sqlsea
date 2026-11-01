@@ -1,9 +1,8 @@
-//! A single line of text that ends in "…" when it does not fit.
+//! One line of text that ends in "…" if it does not fit.
 //!
-//! iced's own text either wraps or overflows its box. Names, paths and SQL in
-//! lists and bars must stay on one line and never push or cover their
-//! neighbours, so this widget measures the text with the real font and cuts it
-//! to the width it is given.
+//! The text widget of iced wraps or goes past its box. Names, paths and SQL in
+//! lists and bars must stay on one line and must not cover other controls.
+//! This widget measures the text with the real font and cuts it to fit.
 
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer;
@@ -50,14 +49,14 @@ impl Fit {
         self
     }
 
-    /// `Fill` takes the space left after its siblings; the default, `Shrink`,
-    /// takes only what the text needs.
+    /// `Fill` takes the space that the other widgets leave. `Shrink`, the
+    /// default, takes only the space that the text needs.
     pub fn width(mut self, width: impl Into<Length>) -> Self {
         self.width = width.into();
         self
     }
 
-    /// Never wider than this, even when more room is free.
+    /// The widest that the text can be, even if there is more space.
     pub fn max_width(mut self, max_width: f32) -> Self {
         self.max_width = max_width;
         self
@@ -66,7 +65,7 @@ impl Fit {
 
 struct State<P> {
     paragraph: P,
-    /// What the paragraph was built from, to skip work when nothing changed.
+    /// The inputs of the last layout, so that unchanged text is not measured again.
     built: Option<(String, f32, f32, Font)>,
 }
 
@@ -84,8 +83,8 @@ fn line(content: &str, size: f32, font: Font) -> text::Text<&str, Font> {
     }
 }
 
-/// The text to show in `width`: the first line, marked " …" when more lines
-/// follow, or the longest start of it that fits with "…" after it.
+/// The text to show in `width`. This is the first line, with " …" if more
+/// lines follow. If the line is too wide, it is cut and ends with "…".
 fn cut<P: text::Paragraph<Font = Font>>(
     content: &str,
     size: f32,
@@ -102,13 +101,13 @@ fn cut<P: text::Paragraph<Font = Font>>(
     if fits(&whole) {
         return whole;
     }
-    // Byte offsets just after each character.
+    // The byte offset after each character.
     let ends: Vec<usize> = first
         .char_indices()
         .map(|(i, c)| i + c.len_utf8())
         .collect();
     let candidate = |n: usize| format!("{}…", first[..ends[n - 1]].trim_end());
-    // Binary search: `lo` characters fit, `hi` do not.
+    // Binary search. `lo` characters fit and `hi` characters do not fit.
     let (mut lo, mut hi) = (0, ends.len());
     while hi - lo > 1 {
         let mid = (lo + hi) / 2;
@@ -118,7 +117,7 @@ fn cut<P: text::Paragraph<Font = Font>>(
             hi = mid;
         }
     }
-    // With no room for even one character, show nothing rather than a stray "…".
+    // If not one character fits, show nothing. A "…" alone is confusing.
     if lo == 0 {
         String::new()
     } else {

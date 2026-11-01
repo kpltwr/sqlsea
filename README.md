@@ -1,8 +1,6 @@
 <img src="brand/png/lockup-528.png" alt="sqlsea" width="264">
 
-A small native database client in Rust. Browse tables, edit rows, run SQL. Built with iced.
-
-Supports PostgreSQL and SQLite, on Linux, macOS and Windows.
+sqlsea is a small desktop database client, written in Rust with iced. You can browse tables, edit rows and run SQL on PostgreSQL and SQLite databases. It runs on Linux, macOS and Windows.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/dark.png">
@@ -11,123 +9,101 @@ Supports PostgreSQL and SQLite, on Linux, macOS and Windows.
 
 ## Install
 
-Build a package on the platform you want it for; each script writes to `dist/`.
+Build the package on the system that you want to use it on. Each script writes the package to the `dist/` folder.
 
-**Linux**
+On Linux, run this command:
 
 ```sh
 packaging/linux/package.sh    # dist/sqlsea-<version>-linux-<arch>.tar.gz
 ```
 
-Unpack it anywhere and run `./install.sh` inside. That puts sqlsea in `~/.local/bin` and in your app launcher; `./install.sh --remove` takes it out. From the source tree, `cargo build --release && packaging/linux/install.sh` does the same.
+Unpack the file and run `./install.sh` in the folder. The script puts sqlsea in `~/.local/bin` and in your app launcher. To remove it, run `./install.sh --remove`.
 
-**macOS** (needs Xcode command line tools)
+On macOS, install the Xcode command line tools first, then run this command:
 
 ```sh
-packaging/macos/package.sh    # dist/sqlsea-<version>-macos.dmg, for Apple silicon and Intel
+packaging/macos/package.sh    # dist/sqlsea-<version>-macos.dmg
 ```
 
-Open the disk image and drag sqlsea to Applications. Unless you sign and notarize it (see the top of `packaging/macos/package.sh`), macOS will ask before the first launch on other Macs: open it with right-click, Open.
+Open the disk image and drag sqlsea to Applications. The app works on Apple silicon and on Intel. If you do not sign the app, macOS asks before the first start on other computers. To start it, right-click the app and choose Open. To sign the app, read the comments at the top of `packaging/macos/package.sh`.
 
-**Windows** (needs Rust with the MSVC toolchain and the Visual Studio C++ build tools)
+On Windows, install Rust with the MSVC toolchain and the Visual Studio C++ build tools first. Then run this command:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File packaging\windows\package.ps1
 ```
 
-That writes `dist\sqlsea-<version>-windows-<arch>.zip`. The `sqlsea.exe` inside is the whole app and runs from anywhere. To add it to the Start menu, run `install.ps1` from the unpacked folder (`-Remove` undoes it). Windows SmartScreen warns about unsigned programs the first time; choose More info, Run anyway.
+The command writes `dist\sqlsea-<version>-windows-<arch>.zip`. The `sqlsea.exe` file in it is the complete app. To add sqlsea to the Start menu, run `install.ps1` in the unpacked folder. To remove it, run `install.ps1 -Remove`. The first time, SmartScreen warns about the unsigned app. To start it, choose More info, then Run anyway.
 
 ## Run from source
 
 ```sh
-cargo run --release                     # connection screen
-cargo run --release -- ~/data/app.db    # open a SQLite file directly
+cargo run --release                     # the connection screen
+cargo run --release -- ~/data/app.db    # open a SQLite file
 cargo run --release -- "My database"    # open a saved connection by name
 ```
 
-The release binary is `target/release/sqlsea`. To put it in your app launcher with its icon:
-
-```sh
-cargo build --release && packaging/linux/install.sh     # --remove undoes it
-```
+On Linux, `cargo build --release && packaging/linux/install.sh` adds the build to your app launcher.
 
 ## Use
 
-- **Data**: the open table, 200 rows a page, paged by primary key. Click a column head to sort (ascending, descending, off). Click a row to edit it in the side panel. Changed fields turn blue; Save writes only those. NULL toggles a nullable field. Add row inserts; columns left empty take their defaults.
-- **Structure**: columns, types, nullability, defaults and the primary key.
-- **Query**: write SQL and press Ctrl+Enter (Cmd+Enter on macOS), or Run. If text is selected, only the selection runs. Several statements can run at once; the last result set is shown, up to 5,000 rows. Open more query tabs with New; each keeps its own SQL and result. A running query shows its time and can be stopped with Cancel or Esc.
-- **History**: every query you run is kept per connection, newest first, with how long it took and what it returned. Filter it, and click one to load it back into the editor.
-- **Export**: save a query's result, or a whole table from the Data tab, as CSV or JSON (pick the type in the save dialog). Ctrl+C copies the selected row as tab-separated values, ready to paste into a spreadsheet.
+To connect, fill in the form and click Connect. For a SQLite file or a CA certificate, you can type the path or click Browse. A connection that works is saved.
 
-Rows can only be edited in tables with a primary key, and never in views.
+The Data tab shows the open table, 200 rows on each page. Click a column head to sort by that column. Click a row to edit it in the panel on the right. Save writes only the fields that you changed. Add row inserts a row, and empty fields get their default values. You can edit rows only in tables that have a primary key. You cannot edit views.
 
-Each connection can set a query time limit in seconds; a query from the Query tab that runs longer is cancelled on the server.
+The Structure tab shows the columns, their types and defaults, and the primary key.
 
-Light and dark themes are in the top bar. Auto follows your desktop's setting and switches when it does; your choice is remembered.
+In the Query tab, write SQL and press Ctrl+Enter. If you select text, only that text runs. The result shows up to 5,000 rows. Each query tab keeps its own SQL and result. To stop a running query, click Cancel or press Esc. To stop long queries automatically, set a time limit in seconds for the connection.
 
-| Keys | |
+History keeps each query that you run, for each connection. Click a query in the history to put it back in the editor.
+
+Export saves a query result, or a full table from the Data tab, as CSV or JSON. Ctrl+C copies the selected row as tab-separated values.
+
+The top bar has the Auto, Light and Dark themes. Auto uses the theme of your desktop.
+
+| Keys | Action |
 | --- | --- |
-| Ctrl+Enter | Run the query (Cmd on macOS, as for all of these) |
-| Ctrl+T, Ctrl+W | New query tab, close query tab |
+| Ctrl+Enter | Run the query |
+| Ctrl+T, Ctrl+W | Open or close a query tab |
 | Ctrl+C | Copy the selected row |
-| Ctrl+R | Reload the schema and the open table |
-| Ctrl+1, 2, 3 | Data, Structure, Query |
-| Esc | Cancel the running query, or close the row panel |
-| Tab, Shift+Tab | Move between fields |
+| Ctrl+R | Reload the tables and the open table |
+| Ctrl+1, 2, 3 | Go to Data, Structure or Query |
+| Esc | Stop the running query, or close the row panel |
+| Tab, Shift+Tab | Go to the next or previous field |
 
-## Saved connections
+On macOS, use Cmd instead of Ctrl.
 
-Connection details are saved in `connections.json` in sqlsea's config folder: `~/.config/sqlsea` on Linux, `~/Library/Application Support/sqlsea` on macOS, `%APPDATA%\sqlsea` on Windows. Query history is beside it, in `history/`, one file per connection, and goes when you delete the connection. On Linux and macOS these files are readable only by you.
+## Saved connections and passwords
 
-**Passwords are never written to that file.** They go into the system keyring, where they are encrypted and unlocked by your login: the Secret Service on Linux (GNOME Keyring, KWallet), the Keychain on macOS, and Credential Manager on Windows. A file from an older sqlsea that still holds passwords is moved into the keyring on first launch. If no keyring is available, sqlsea says so and asks for the password each time instead of saving it.
+sqlsea saves connections in `connections.json` in its configuration folder. This folder is `~/.config/sqlsea` on Linux, `~/Library/Application Support/sqlsea` on macOS and `%APPDATA%\sqlsea` on Windows. The query history is in the `history/` folder there, with one file for each connection. On Linux and macOS, only you can read these files.
+
+sqlsea never writes passwords to a file. It keeps them in the system keyring. This is the Secret Service on Linux (GNOME Keyring or KWallet), the Keychain on macOS and Credential Manager on Windows. If no keyring is available, sqlsea tells you and asks for the password each time.
 
 ## Remote databases
 
-PostgreSQL connections can use TLS. Choose under Encryption:
+PostgreSQL connections can use TLS. Choose one of these modes under Encryption:
 
-| Mode | What it does | Use it for |
+| Mode | What it does | Same as |
 | --- | --- | --- |
-| Off | Plain connection | This computer, or an SSH tunnel |
-| If available | Encrypts when the server supports it; the certificate is not checked | The default; matches `sslmode=prefer` |
-| Required | Always encrypts; the certificate is not checked | Servers that insist on TLS; matches `sslmode=require` |
-| Verified | Always encrypts, and checks the certificate chain and host name | Remote servers; matches `sslmode=verify-full` |
+| Off | A plain connection. Use it on your computer or through an SSH tunnel. | `sslmode=disable` |
+| If available | Encrypts if the server supports TLS. Does not check the certificate. This is the default. | `sslmode=prefer` |
+| Required | Always encrypts. Does not check the certificate. | `sslmode=require` |
+| Verified | Always encrypts, and checks the certificate and the host name. Use it for remote servers. | `sslmode=verify-full` |
 
-Verified trusts the certificate authorities your system trusts. Providers that sign with their own authority (Amazon RDS, for one) publish a CA bundle: download it and set it as the CA certificate file. After connecting, the top bar says whether the connection is encrypted.
-
-TLS is rustls with the ring provider, so there is no OpenSSL dependency.
-
-## Design screenshots
-
-`cargo run --features shot` adds a scripted mode for design review:
-
-```sh
-ICED_BACKEND=tiny-skia SQLSEA_SCRIPT="table:users;row:2;shot:/tmp/a.png;quit" \
-  cargo run --features shot -- ~/data/app.db
-```
-
-Steps run one every 1.2 seconds: `table:<name>`, `tab:data|structure|query`, `row:<n>`, `add`, `edit:<field>=<value>`, `save`, `delete`, `sql:<text>`, `run`, `pick:<n>` (a saved connection), `forget` (delete it), `mode:auto|light|dark`, `newtab`, `closetab:<id>`, `cancel`, `history`, `usehist:<n>`, `copy`, `shot:<path.png>`, `quit`.
+Verified trusts the certificate authorities that your system trusts. Some providers, for example Amazon RDS, use their own authority. For these providers, download their CA file and choose it as the CA certificate file. After you connect, the top bar tells you if the connection is encrypted.
 
 ## Brand
 
-Logos, icons, colours and type are in [`brand/`](brand/BRAND.md). Rebuild them with `cargo run --example brand`.
+The logos, icons, colors and fonts are in [`brand/`](brand/BRAND.md). To make the files again, run `cargo run --example brand`.
 
-## Fonts
-
-IBM Plex Sans, Familjen Grotesk and JetBrains Mono are embedded from `assets/fonts`, each under the SIL Open Font License (licence files beside them).
+The app includes the IBM Plex Sans, Familjen Grotesk and JetBrains Mono fonts from `assets/fonts`. Each font has the SIL Open Font License, which is in the same folder.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+Read [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-Licensed under either of
+You can use sqlsea under the Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE)) or the MIT license ([LICENSE-MIT](LICENSE-MIT)).
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-- MIT license ([LICENSE-MIT](LICENSE-MIT))
-
-at your option.
-
-Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
-
-The bundled fonts are under the SIL Open Font License; see `assets/fonts`.
+Unless you state otherwise, you license each contribution that you submit for inclusion under both licenses, as the Apache-2.0 license defines. There are no other terms or conditions.

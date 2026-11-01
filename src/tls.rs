@@ -1,4 +1,4 @@
-//! TLS for PostgreSQL connections, on rustls with the ring provider.
+//! TLS for PostgreSQL connections, with rustls and the ring provider.
 
 use std::sync::Arc;
 
@@ -21,7 +21,7 @@ pub fn connector(mode: Tls, ca_file: &str) -> Result<MakeRustlsConnect, String> 
         Tls::Verify => builder
             .with_root_certificates(roots(ca_file)?)
             .with_no_client_auth(),
-        // `Prefer` and `Require` encrypt without checking who answered, as libpq does.
+        // Like libpq, `Prefer` and `Require` encrypt but do not check the server certificate.
         _ => builder
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(Unchecked(provider)))
@@ -30,18 +30,18 @@ pub fn connector(mode: Tls, ca_file: &str) -> Result<MakeRustlsConnect, String> 
     Ok(MakeRustlsConnect::new(config))
 }
 
-/// The system's trusted authorities, plus any in the given PEM file.
+/// The trusted authorities of the system, and the ones in the PEM file.
 fn roots(ca_file: &str) -> Result<rustls::RootCertStore, String> {
     let mut roots = rustls::RootCertStore::empty();
     for cert in rustls_native_certs::load_native_certs().certs {
-        // A malformed system certificate should not block the rest.
+        // Skip a bad certificate of the system and use the others.
         let _ = roots.add(cert);
     }
     let ca_file = ca_file.trim();
     if !ca_file.is_empty() {
         let mut added = 0;
         let certs = CertificateDer::pem_file_iter(ca_file)
-            .map_err(|e| format!("Could not read the CA certificate file: {e}"))?;
+            .map_err(|e| format!("The CA certificate file did not open: {e}"))?;
         for cert in certs {
             let cert =
                 cert.map_err(|e| format!("The CA certificate file is not valid PEM: {e}"))?;
@@ -60,7 +60,7 @@ fn roots(ca_file: &str) -> Result<rustls::RootCertStore, String> {
     Ok(roots)
 }
 
-/// Accepts any certificate, but still checks the handshake signatures.
+/// Accepts all certificates, but checks the handshake signatures.
 #[derive(Debug)]
 struct Unchecked(Arc<CryptoProvider>);
 

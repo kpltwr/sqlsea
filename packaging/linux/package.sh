@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Builds a Linux release of sqlsea into dist/:
-#   dist/sqlsea-<version>-linux-<arch>.tar.gz   binary, icons, launcher entry, install.sh
-# Run from any folder.
+# Makes a Linux package of sqlsea: dist/sqlsea-<version>-linux-<arch>.tar.gz.
+# The package holds the app, the icons, the launcher entry and install.sh.
+# You can run this script from any folder.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 

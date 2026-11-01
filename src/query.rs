@@ -1,5 +1,5 @@
-//! The Query tab: several SQL editors, each with its own result, and the
-//! connection's query history.
+//! The Query tab: SQL editors in tabs, each with its own result, and the
+//! query history of the connection.
 
 use std::time::Instant;
 
@@ -23,13 +23,13 @@ pub struct QueryTab {
     pub editor: text_editor::Content,
     pub result: Load<ResultSet>,
     pub selected: Option<usize>,
-    /// Bumped on every run, so a late answer to an earlier run is dropped.
+    /// Goes up on each run, so that a late answer to an earlier run is ignored.
     pub run: u64,
-    /// The SQL of the current or last run, for the history.
+    /// The SQL of the current or the last run, for the history.
     pub sql: String,
-    /// When the current run started, while it is running.
+    /// The start time of the current run, while it runs.
     pub started: Option<Instant>,
-    /// The user asked to stop the current run.
+    /// True after the user asks to stop the current run.
     pub cancelling: bool,
 }
 
@@ -55,7 +55,7 @@ impl QueryTab {
         self.started.is_some()
     }
 
-    /// The selection if there is one, otherwise the whole editor.
+    /// The selected text, or all text if nothing is selected.
     pub fn sql_to_run(&self) -> String {
         self.editor
             .selection()
@@ -63,7 +63,7 @@ impl QueryTab {
             .unwrap_or_else(|| self.editor.text())
     }
 
-    /// Replaces the editor's text, keeping undo history.
+    /// Replaces the text of the editor. Undo still works.
     pub fn set_sql(&mut self, sql: String) {
         self.editor.perform(text_editor::Action::SelectAll);
         self.editor
@@ -72,8 +72,8 @@ impl QueryTab {
             )));
     }
 
-    /// Settles a finished run. Returns the history entry for it, or `None`
-    /// when the answer belongs to an earlier run.
+    /// Records the end of a run. Returns its history entry, or `None` if the
+    /// answer is for an earlier run.
     pub fn finish(&mut self, run: u64, result: Result<ResultSet, String>) -> Option<HistoryEntry> {
         if run != self.run {
             return None;
@@ -151,7 +151,7 @@ impl Queries {
         }
     }
 
-    /// Closes a tab. The last tab is never closed; it is emptied instead.
+    /// Closes a tab. The last tab does not close. It becomes empty.
     pub fn close(&mut self, id: u64) {
         let Some(i) = self.tabs.iter().position(|t| t.id == id) else {
             return;
@@ -169,7 +169,7 @@ impl Queries {
 
     // ---------- view ----------
 
-    /// Controls for the main tab strip: history, export, and run or cancel.
+    /// The toolbar: History, Export, and Run or Cancel.
     pub fn tools(&self, density: Density) -> Element<'_, Message> {
         let tab = self.active();
         let exportable = matches!(&tab.result, Load::Ready(rs) if !rs.columns.is_empty());
@@ -222,7 +222,7 @@ impl Queries {
         .into()
     }
 
-    /// `width` is the main area's; `panel` the history panel's, when open.
+    /// `width` is the width of the main area. `panel` is the width of the history panel, if it is open.
     pub fn view(&self, width: f32, panel: f32) -> Element<'_, Message> {
         let tab = self.active();
         let running = tab.running();
@@ -256,8 +256,8 @@ impl Queries {
         let results: Element<_> = match &tab.result {
             Load::Idle => empty_state(
                 format!(
-                    "Results show here. Write SQL above and press {RUN_KEY}+Enter; \
-                     a selection runs on its own."
+                    "Results show here. Write SQL above and press {RUN_KEY}+Enter. \
+                     If you select text, only that text runs."
                 ),
                 None,
             ),
@@ -311,8 +311,8 @@ impl Queries {
         }
     }
 
-    /// The row of query tabs above the editor. Tabs scroll sideways when there
-    /// are more than fit, and New stays in view.
+    /// The query tabs above the editor. If there are too many tabs, they scroll
+    /// sideways. New always stays visible.
     fn strip(&self, width: f32) -> Element<'_, Message> {
         let tabs = Row::with_children(self.tabs.iter().enumerate().map(|(i, tab)| {
             let active = i == self.active;
@@ -467,7 +467,7 @@ fn toggle_key(label: &str, on: bool, message: Message) -> Element<'_, Message> {
     .into()
 }
 
-/// How long ago, roughly, in words.
+/// About how long ago, in words.
 fn ago(now: u64, at: u64) -> String {
     let s = now.saturating_sub(at);
     match s {

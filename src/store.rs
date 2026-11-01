@@ -1,6 +1,6 @@
-//! Saved connections. The details live as JSON in the user's config
-//! directory; passwords live in the system keyring (the Secret Service, such as
-//! GNOME Keyring), keyed by each connection's id, and never touch the file.
+//! Saved connections, settings and query history. The details are JSON files
+//! in the configuration folder of the user. Passwords are in the system
+//! keyring, with the connection id as the key. They are never in a file.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -20,7 +20,7 @@ fn path() -> Option<PathBuf> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Appearance {
-    /// Follow the desktop's light or dark preference.
+    /// Use the light or dark theme of the desktop.
     #[default]
     Auto,
     Light,
@@ -59,9 +59,9 @@ pub fn save_settings(settings: &Settings) -> Result<(), String> {
     std::fs::write(dir.join("settings.json"), json).map_err(|e| e.to_string())
 }
 
-/// Loads saved connections with their passwords filled in from the keyring.
-/// Passwords found in an older file are moved into the keyring and dropped
-/// from the file. The second value describes a keyring problem, if any.
+/// Loads the saved connections, with their passwords from the keyring. If an
+/// older file has passwords, they move to the keyring and out of the file. The
+/// second value is a keyring problem, if there is one.
 pub fn load() -> (Vec<Config>, Option<String>) {
     let Some(mut configs) = path()
         .and_then(|p| std::fs::read(p).ok())
@@ -89,8 +89,8 @@ pub fn load() -> (Vec<Config>, Option<String>) {
             }
         }
     }
-    // Rewriting is what drops plain-text passwords from the file, so only do
-    // it once every one of them is safely in the keyring.
+    // The rewrite removes plain-text passwords from the file. Do it only after
+    // all of them are in the keyring.
     if rewrite
         && problem.is_none()
         && let Err(e) = save(&configs)
@@ -99,12 +99,12 @@ pub fn load() -> (Vec<Config>, Option<String>) {
     }
     (
         configs,
-        problem.map(|e| format!("The system keyring could not be used: {e}")),
+        problem.map(|e| format!("The system keyring is not available: {e}")),
     )
 }
 
-/// Writes the connection details. Passwords are skipped by `Config`'s
-/// serializer; the file is still owner-only, since it names hosts and users.
+/// Writes the connection details, without passwords. Only the owner can read
+/// the file, because it names hosts and users.
 pub fn save(configs: &[Config]) -> Result<(), String> {
     let path = path().ok_or("No config directory on this system.")?;
     if let Some(dir) = path.parent() {
@@ -122,7 +122,7 @@ pub fn save(configs: &[Config]) -> Result<(), String> {
     std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
 }
 
-/// A fresh, stable id for a new connection.
+/// A new id for a new connection. The id does not change later.
 pub fn new_id() -> String {
     static COUNTER: AtomicU32 = AtomicU32::new(0);
     let nanos = std::time::SystemTime::now()
@@ -144,8 +144,8 @@ fn get_password(id: &str) -> Result<String, String> {
     }
 }
 
-/// Stores the password, or removes it when empty (for servers that trust the
-/// user without one).
+/// Stores the password. If the password is empty, removes it. Some servers
+/// accept users without a password.
 pub fn set_password(id: &str, password: &str) -> Result<(), String> {
     if password.is_empty() {
         return delete_password(id);
@@ -162,7 +162,7 @@ pub fn delete_password(id: &str) -> Result<(), String> {
 
 // ---------- query history ----------
 
-/// Runs kept per connection; the oldest fall off.
+/// The most runs kept for each connection. The oldest ones are removed.
 const HISTORY_LIMIT: usize = 500;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -171,13 +171,13 @@ pub struct HistoryEntry {
     /// Seconds since the Unix epoch.
     pub at: u64,
     pub ok: bool,
-    /// Rows returned, or rows changed by a statement without a result.
+    /// The rows returned, or the rows that a statement without results changed.
     pub rows: Option<u64>,
     pub millis: u64,
 }
 
 fn history_path(id: &str) -> Option<PathBuf> {
-    // Ids are generated hex, but never let one name a path outside the folder.
+    // Ids are generated, but remove all characters that can name another folder.
     let safe: String = id
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
@@ -193,15 +193,15 @@ pub fn load_history(id: &str) -> Vec<HistoryEntry> {
         .unwrap_or_default()
 }
 
-/// Adds a run to the front of the history. Running the same SQL again moves
-/// it to the front instead of repeating it.
+/// Adds a run at the start of the history. If the same SQL is already in the
+/// history, it moves to the start.
 pub fn record(history: &mut Vec<HistoryEntry>, entry: HistoryEntry) {
     history.retain(|e| e.sql.trim() != entry.sql.trim());
     history.insert(0, entry);
     history.truncate(HISTORY_LIMIT);
 }
 
-/// History can hold sensitive SQL, so like the connections file it is owner-only.
+/// SQL can be sensitive, so only the owner can read the history file.
 pub fn save_history(id: &str, history: &[HistoryEntry]) -> Result<(), String> {
     let path = history_path(id).ok_or("No config directory on this system.")?;
     if let Some(dir) = path.parent() {

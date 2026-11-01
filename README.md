@@ -65,6 +65,12 @@ You can edit rows only in tables that have a primary key. You cannot edit views.
 
 The Structure tab has five parts. Columns shows the columns, their types and defaults, and the primary key. Indexes shows the indexes and their columns. Foreign keys shows the keys to other tables, and Referenced by shows the keys in other tables that point to this table. SQL shows the CREATE statement, and Copy SQL copies it. SQLite keeps the original statement. For PostgreSQL, sqlsea makes the statement from the system catalog.
 
+The Diagram tab shows the tables and the foreign keys between them. Each table is a box with its columns. A filled dot marks a primary key column, and a ring marks a foreign key column. A line goes from each foreign key to the table that it points to. The fork is at the end of the foreign key, and the bar is at the end of the table that it points to. Tables that other tables point to are on the left. Tables without keys are on the right. Drag a table to move it, and drag the background to move the whole diagram. Press Ctrl and scroll to zoom. Click a table to open it in the Data tab.
+
+sqlsea saves the places of the tables that you move, for each connection and schema. The next time, the diagram shows them in the same places. A new table goes to the right of the tables that you moved. To go back to the automatic layout, click Arrange.
+
+If a PostgreSQL database has more than one schema with tables, the diagram shows one schema at a time. Choose the schema in the list above the diagram. Tables in other schemas show only if they have keys with the chosen schema, and their names include the schema.
+
 In the Query tab, write SQL and press Ctrl+Enter. As you type, the bar below the editor suggests tables, columns and keywords. Press Tab or click a suggestion to use it. After a table name or an alias and a period, for example `o.` in `from orders o`, it suggests the columns of that table. If you select text, only that text runs. The result shows up to 5,000 rows. Each query tab keeps its own SQL and result. To stop a running query, click Cancel or press Esc. To stop long queries automatically, set a time limit in seconds for the connection.
 
 Before sqlsea runs an `UPDATE` or `DELETE` without a `WHERE` clause, a `TRUNCATE`, or a `DROP` of a table, schema or database, it asks you to confirm. These statements change or remove all rows. The check reads the SQL text only, so it does not find every risk.
@@ -83,7 +89,7 @@ The top bar has the Auto, Light and Dark themes. Auto uses the theme of your des
 | Ctrl+P | Search tables and columns |
 | Ctrl+F | Filter the rows of the open table |
 | Ctrl+R | Reload the tables and the open table |
-| Ctrl+1, 2, 3 | Go to Data, Structure or Query |
+| Ctrl+1, 2, 3, 4 | Go to Data, Structure, Query or Diagram |
 | Up, Down, Page Up, Page Down, Home, End | Move the row selection |
 | Enter | Open the selected row in the row panel |
 | F2 | Edit the first cell of the selected row |
@@ -96,7 +102,7 @@ On macOS, use Cmd instead of Ctrl.
 
 ## Saved connections and passwords
 
-sqlsea saves connections in `connections.json` in its configuration folder. This folder is `~/.config/sqlsea` on Linux, `~/Library/Application Support/sqlsea` on macOS and `%APPDATA%\sqlsea` on Windows. The query history is in the `history/` folder there, with one file for each connection. On Linux and macOS, only you can read these files.
+sqlsea saves connections in `connections.json` in its configuration folder. This folder is `~/.config/sqlsea` on Linux, `~/Library/Application Support/sqlsea` on macOS and `%APPDATA%\sqlsea` on Windows. The query history is in the `history/` folder there, and the places of moved diagram tables are in the `diagrams/` folder. Both have one file for each connection. On Linux and macOS, only you can read these files.
 
 sqlsea never writes passwords to a file. It keeps them in the system keyring. This is the Secret Service on Linux (GNOME Keyring or KWallet), the Keychain on macOS and Credential Manager on Windows. If no keyring is available, sqlsea tells you and asks for the password each time.
 

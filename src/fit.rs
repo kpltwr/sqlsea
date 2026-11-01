@@ -83,6 +83,17 @@ fn line(content: &str, size: f32, font: Font) -> text::Text<&str, Font> {
     }
 }
 
+/// The width of one line of text, measured with the real font.
+pub fn measure(content: &str, size: f32, font: Font) -> f32 {
+    use iced::advanced::graphics::text::Paragraph;
+    Paragraph::with_text(line(content, size, font)).min_width()
+}
+
+/// `content` cut with "…" to `width`, for text that is not in a `Fit` widget.
+pub fn cut_to(content: &str, size: f32, font: Font, width: f32) -> String {
+    cut::<iced::advanced::graphics::text::Paragraph>(content, size, font, width)
+}
+
 /// The text to show in `width`. This is the first line, with " …" if more
 /// lines follow. If the line is too wide, it is cut and ends with "…".
 fn cut<P: text::Paragraph<Font = Font>>(

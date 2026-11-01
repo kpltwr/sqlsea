@@ -4,6 +4,7 @@
 mod chrome;
 mod complete;
 mod db;
+mod diagram;
 mod dsn;
 mod export;
 mod fit;
@@ -19,7 +20,7 @@ mod tunnel;
 
 use iced::keyboard::{self, Key, key::Named};
 use iced::widget::{
-    Column, Row, button, checkbox, column, container, image, operation, responsive, row,
+    Column, Row, button, checkbox, column, container, image, operation, pick_list, responsive, row,
     scrollable, space, text, text_editor, text_input,
 };
 use iced::{Center, Element, Fill, Length, Padding, Subscription, Task};
@@ -115,6 +116,7 @@ enum Tab {
     Data,
     Structure,
     Query,
+    Diagram,
 }
 
 #[derive(Debug, Clone)]
@@ -179,6 +181,9 @@ struct Session {
     structure_sql: text_editor::Content,
     /// For each grid, its scroll position and visible height.
     scrolled: std::collections::HashMap<&'static str, (f32, f32)>,
+    diagram: Load<diagram::Diagram>,
+    /// Goes up with each diagram load, so that late answers are ignored.
+    diagram_run: u64,
 }
 
 /// The column names of each table, by schema and table name.
@@ -378,6 +383,14 @@ enum Message {
     Complete(usize),
     SwitchStructure(StructureView),
     StructureLoaded(u64, Result<db::Structure, String>),
+    DiagramLoaded(u64, Result<db::Relations, String>),
+    DiagramSchema(String),
+    /// Opens a table from the diagram in the Data tab.
+    DiagramOpen(Table),
+    /// A table moved in the diagram: the layout, the table and its new place.
+    DiagramMoved(u64, usize, iced::Point),
+    /// Forgets the places of the tables that were moved by hand.
+    DiagramArrange,
     /// Edits are ignored, so the SQL in the Structure tab is read-only.
     StructureSqlAction(text_editor::Action),
     CopyStructureSql,
@@ -425,7 +438,21 @@ impl App {
         let mut task = iced::system::theme().map(Message::SystemTheme);
         // `sqlsea app.db` opens a SQLite file. `sqlsea name` opens a saved connection.
         if let Some(arg) = std::env::args().nth(1) {
-            if let Some(i) = app.saved.iter().position(|c| c.name == arg) {
+            // A file uses the saved connection to the same file, so that it keeps
+            // its id, and with it its history and diagram places.
+            let same_file = |c: &Config| {
+                c.kind == Kind::Sqlite
+                    && match (std::fs::canonicalize(&c.path), std::fs::canonicalize(&arg)) {
+                        (Ok(a), Ok(b)) => a == b,
+                        _ => c.path == arg,
+                    }
+            };
+            if let Some(i) = app
+                .saved
+                .iter()
+                .position(|c| c.name == arg)
+                .or_else(|| app.saved.iter().position(same_file))
+            {
                 app.form = app.saved[i].clone();
                 app.editing = Some(i);
             } else {
@@ -435,6 +462,10 @@ impl App {
                     path: arg,
                     ..Default::default()
                 };
+            }
+            // Connections that were saved without an id get one now.
+            if app.form.id.is_empty() {
+                app.form.id = store::new_id();
             }
             app.busy = true;
             task = Task::batch([task, connect(app.form.clone())]);
@@ -609,7 +640,7 @@ impl App {
             Message::DeleteSaved => {
                 if let Some(i) = self.editing.take() {
                     let gone = self.saved.remove(i);
-                    store::delete_history(&gone.id);
+                    store::delete_connection_files(&gone.id);
                     self.form = Config::default();
                     self.notice = store::save(&self.saved)
                         .and_then(|()| store::delete_password(&gone.id))
@@ -1043,6 +1074,8 @@ impl Session {
             structure_run: 0,
             structure_view: StructureView::Columns,
             structure_sql: text_editor::Content::new(),
+            diagram: Load::Idle,
+            diagram_run: 0,
         }
     }
 
@@ -1181,6 +1214,31 @@ impl Session {
         out
     }
 
+    /// Saves the places of the tables in the diagram that were moved by hand.
+    fn save_places(&mut self) -> Task<Message> {
+        if let Load::Ready(d) = &self.diagram
+            && let Err(e) = store::save_places(&self.config.id, d.places())
+        {
+            self.status = Some(Notice::Error(format!(
+                "The places of the tables were not saved: {e}"
+            )));
+        }
+        Task::none()
+    }
+
+    /// Loads the tables and keys for the diagram, while the Diagram tab shows and they are not loaded.
+    fn load_diagram(&mut self) -> Task<Message> {
+        if self.tab != Tab::Diagram || !matches!(self.diagram, Load::Idle) {
+            return Task::none();
+        }
+        self.diagram = Load::Loading;
+        self.diagram_run += 1;
+        let run = self.diagram_run;
+        Task::perform(db::relations(self.db.clone()), move |r| {
+            Message::DiagramLoaded(run, r)
+        })
+    }
+
     /// Loads indexes, keys and SQL, while the Structure tab shows and they are not loaded.
     fn load_structure(&mut self) -> Task<Message> {
         if self.tab != Tab::Structure || !matches!(self.structure, Load::Idle) {
@@ -1276,7 +1334,8 @@ impl Session {
                 return Task::none();
             }
             Message::Refresh => {
-                let tables = self.load_tables();
+                self.diagram = Load::Idle;
+                let tables = Task::batch([self.load_tables(), self.load_diagram()]);
                 return match self.current {
                     Some(_) => Task::batch([tables, self.load_columns()]),
                     None => tables,
@@ -1320,7 +1379,40 @@ impl Session {
                 if tab == Tab::Query {
                     return operation::focus("sql");
                 }
-                return self.load_structure();
+                return Task::batch([self.load_structure(), self.load_diagram()]);
+            }
+            Message::DiagramLoaded(run, result) => {
+                if run == self.diagram_run {
+                    let prefer = self.current.as_ref().and_then(|t| t.schema.clone());
+                    self.diagram = match result {
+                        Ok(r) => {
+                            let places = store::load_places(&self.config.id);
+                            Load::Ready(diagram::Diagram::new(r, prefer.as_deref(), places))
+                        }
+                        Err(e) => Load::Failed(e),
+                    };
+                }
+            }
+            Message::DiagramSchema(schema) => {
+                if let Load::Ready(d) = &mut self.diagram {
+                    d.set_schema(schema);
+                }
+            }
+            Message::DiagramMoved(layout, node, to) => {
+                if let Load::Ready(d) = &mut self.diagram {
+                    d.move_table(layout, node, to);
+                    return self.save_places();
+                }
+            }
+            Message::DiagramArrange => {
+                if let Load::Ready(d) = &mut self.diagram {
+                    d.arrange_again();
+                    return self.save_places();
+                }
+            }
+            Message::DiagramOpen(table) => {
+                self.tab = Tab::Data;
+                return self.open(table);
             }
             Message::SwitchStructure(view) => {
                 self.structure_view = view;
@@ -1757,7 +1849,7 @@ impl Session {
                             .and_then(|r| rs.rows.get(r).map(|row| (r, row.clone()))),
                         _ => None,
                     },
-                    Tab::Structure => None,
+                    Tab::Structure | Tab::Diagram => None,
                 };
                 if let Some((r, row)) = row {
                     let n = if self.tab == Tab::Data {
@@ -1885,7 +1977,7 @@ impl Session {
                 Load::Ready(rs) => (rs.rows.len(), self.queries.active().selected, QUERY_GRID.0),
                 _ => return Task::none(),
             },
-            Tab::Structure => return Task::none(),
+            Tab::Structure | Tab::Diagram => return Task::none(),
         };
         if rows == 0 {
             return Task::none();
@@ -2047,6 +2139,9 @@ impl Session {
             Key::Character("3") if modifiers.command() => {
                 self.update(Message::SwitchTab(Tab::Query))
             }
+            Key::Character("4") if modifiers.command() => {
+                self.update(Message::SwitchTab(Tab::Diagram))
+            }
             _ => Task::none(),
         }
     }
@@ -2100,7 +2195,7 @@ impl Session {
             let panel_open = match self.tab {
                 Tab::Data => self.inspector.is_some(),
                 Tab::Query => self.queries.show_history,
-                Tab::Structure => false,
+                Tab::Structure | Tab::Diagram => false,
             };
             let widths = Widths::for_width(size.width, panel_open);
             let mut middle = row![
@@ -2256,12 +2351,14 @@ impl Session {
             ),
             Tab::Structure => space().into(),
             Tab::Query => self.queries.tools(density),
+            Tab::Diagram => self.diagram_tools(),
         };
 
         let tabs = row![
             tab("Data", Tab::Data),
             tab("Structure", Tab::Structure),
             tab("Query", Tab::Query),
+            tab("Diagram", Tab::Diagram),
         ]
         .spacing(4);
         // If the main area is narrow, the tools go on a line below the tabs.
@@ -2290,6 +2387,7 @@ impl Session {
         let content = match self.tab {
             Tab::Data => self.data_view(),
             Tab::Structure => self.structure_view(),
+            Tab::Diagram => self.diagram_view(),
             Tab::Query => {
                 let catalog = complete::Catalog {
                     tables: self.tables.ready().map(Vec::as_slice).unwrap_or(&[]),
@@ -2305,6 +2403,57 @@ impl Session {
         };
 
         column![strip, hrule(), content].into()
+    }
+
+    /// A hint, Arrange if tables were moved by hand, and the schema list if
+    /// the database has more than one schema with tables.
+    fn diagram_tools(&self) -> Element<'_, Message> {
+        let Load::Ready(d) = &self.diagram else {
+            return space().into();
+        };
+        let mut tools = row![
+            text("Drag a table or the background. Ctrl and scroll to zoom.")
+                .size(theme::TEXT_XS)
+                .style(theme::text_muted)
+                .wrapping(text::Wrapping::None)
+        ]
+        .spacing(8)
+        .align_y(Center);
+        if d.moved_by_hand() {
+            tools = tools.push(small_key(
+                "Arrange",
+                theme::key,
+                Some(Message::DiagramArrange),
+            ));
+        }
+        if d.schemas.len() > 1 {
+            tools = tools.push(
+                pick_list(
+                    d.schemas.as_slice(),
+                    d.schema.clone(),
+                    Message::DiagramSchema,
+                )
+                .text_size(theme::TEXT_SM)
+                .padding(Padding::from([5.0, 10.0]))
+                .style(theme::choice)
+                .menu_style(theme::choice_menu),
+            );
+        }
+        tools.into()
+    }
+
+    fn diagram_view(&self) -> Element<'_, Message> {
+        let body: Element<_> = match &self.diagram {
+            Load::Idle | Load::Loading => empty_state("Reading the tables and keys…", None),
+            Load::Failed(e) => empty_state_error(e),
+            Load::Ready(d) if d.is_empty() => empty_state("This database has no tables.", None),
+            Load::Ready(d) => d.view(Message::DiagramOpen, Message::DiagramMoved),
+        };
+        container(body)
+            .width(Fill)
+            .height(Fill)
+            .style(theme::diagram_area)
+            .into()
     }
 
     fn data_tools(&self, density: Density, width: f32) -> Element<'_, Message> {
@@ -2797,6 +2946,13 @@ impl Session {
                     v
                 }
                 Some(rs) => vec![millis(rs.elapsed)],
+                None => vec![],
+            },
+            Tab::Diagram => match self.diagram.ready() {
+                Some(d) => {
+                    let (tables, keys) = d.counts();
+                    vec![count(tables as u64, "table"), count(keys as u64, "key")]
+                }
                 None => vec![],
             },
         };
@@ -3408,9 +3564,12 @@ fn script() -> Task<Message> {
             "tab" => Some(Message::SwitchTab(match arg {
                 "structure" => Tab::Structure,
                 "query" => Tab::Query,
+                "diagram" => Tab::Diagram,
                 _ => Tab::Data,
             })),
             "sql" => Some(Message::SetSql(arg.replace("\\n", "\n"))),
+            "schema" => Some(Message::DiagramSchema(arg.to_string())),
+            "arrange" => Some(Message::DiagramArrange),
             "run" => Some(Message::Run),
             "pick" => arg.parse().ok().map(Message::PickSaved),
             "kind" => Some(Message::FormKind(if arg == "sqlite" {

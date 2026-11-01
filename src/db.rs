@@ -480,6 +480,187 @@ pub async fn column_index(
     Ok(index)
 }
 
+/// The tables and the foreign keys of the database, for the relationship diagram.
+#[derive(Debug, Clone, Default)]
+pub struct Relations {
+    pub tables: Vec<Entity>,
+    pub keys: Vec<Key>,
+}
+
+/// A table in the diagram.
+#[derive(Debug, Clone)]
+pub struct Entity {
+    pub table: Table,
+    pub columns: Vec<EntityColumn>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EntityColumn {
+    pub name: String,
+    pub data_type: String,
+    pub primary_key: bool,
+}
+
+/// A foreign key. The columns of table `from` point to the columns of table
+/// `to`. Both are indexes in `Relations::tables`.
+#[derive(Debug, Clone)]
+pub struct Key {
+    pub from: usize,
+    pub from_columns: Vec<String>,
+    pub to: usize,
+    pub to_columns: Vec<String>,
+}
+
+pub async fn relations(db: Db) -> Result<Relations, String> {
+    // Each row: schema, table, column, type, primary key ("true" or "false").
+    // Each key row: schema and table of each end, then the two lists of columns,
+    // with the 0x1f character between the names.
+    let sqlite = matches!(db, Db::Sqlite(_));
+    let (columns, keys) = match db {
+        Db::Postgres(_) => {
+            let columns = execute_all(
+                db.clone(),
+                "select n.nspname, c.relname, a.attname, format_type(a.atttypid, a.atttypmod), \
+                   coalesce(a.attnum = any(i.indkey), false)::text \
+                 from pg_class c \
+                 join pg_namespace n on n.oid = c.relnamespace \
+                 join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped \
+                 left join pg_index i on i.indrelid = c.oid and i.indisprimary \
+                 where c.relkind in ('r','p','f') and not c.relispartition \
+                   and n.nspname not in ('pg_catalog','information_schema') \
+                   and n.nspname not like 'pg_toast%' \
+                 order by 1, 2, a.attnum"
+                    .into(),
+            )
+            .await?;
+            let names = |key: &str, table: &str| {
+                format!(
+                    "(select string_agg(a.attname, chr(31) order by k.n) \
+                      from unnest(co.{key}) with ordinality k(attnum, n) \
+                      join pg_attribute a on a.attrelid = co.{table} and a.attnum = k.attnum)"
+                )
+            };
+            let keys = execute_all(
+                db,
+                format!(
+                    "select n1.nspname, c1.relname, n2.nspname, c2.relname, {}, {} \
+                     from pg_constraint co \
+                     join pg_class c1 on c1.oid = co.conrelid \
+                     join pg_namespace n1 on n1.oid = c1.relnamespace \
+                     join pg_class c2 on c2.oid = co.confrelid \
+                     join pg_namespace n2 on n2.oid = c2.relnamespace \
+                     where co.contype = 'f' \
+                     order by 1, 2, co.conname",
+                    names("conkey", "conrelid"),
+                    names("confkey", "confrelid"),
+                ),
+            )
+            .await?;
+            (columns, keys)
+        }
+        Db::Sqlite(_) => {
+            let columns = execute_all(
+                db.clone(),
+                "select null, m.name, p.name, p.type, \
+                   case when p.pk > 0 then 'true' else 'false' end \
+                 from sqlite_master m join pragma_table_info(m.name) p \
+                 where m.type = 'table' and m.name not like 'sqlite_%' \
+                 order by m.name, p.cid"
+                    .into(),
+            )
+            .await?;
+            // A key without "to" columns points to the primary key of its table.
+            let keys = execute_all(
+                db,
+                "select null, m.name, null, f.\"table\", \
+                   group_concat(f.\"from\", char(31) order by f.seq), \
+                   group_concat(f.\"to\", char(31) order by f.seq) \
+                 from sqlite_master m join pragma_foreign_key_list(m.name) f \
+                 where m.type = 'table' and m.name not like 'sqlite_%' \
+                 group by m.name, f.id order by m.name, f.id"
+                    .into(),
+            )
+            .await?;
+            (columns, keys)
+        }
+    };
+
+    let mut out = Relations::default();
+    for row in columns.rows {
+        let mut row = row.into_iter();
+        let mut next = || row.next().flatten();
+        let (schema, table, name, data_type, primary_key) =
+            (next(), next(), next(), next(), next());
+        let (Some(table), Some(name)) = (table, name) else {
+            continue;
+        };
+        let column = EntityColumn {
+            name,
+            data_type: data_type.unwrap_or_default(),
+            primary_key: primary_key.as_deref() == Some("true"),
+        };
+        match out.tables.last_mut() {
+            Some(last) if last.table.schema == schema && last.table.name == table => {
+                last.columns.push(column)
+            }
+            _ => out.tables.push(Entity {
+                table: Table {
+                    schema,
+                    name: table,
+                    is_view: false,
+                },
+                columns: vec![column],
+            }),
+        }
+    }
+
+    let find = |schema: &Option<String>, name: &str| {
+        out.tables.iter().position(|e| {
+            &e.table.schema == schema
+                && if sqlite {
+                    e.table.name.eq_ignore_ascii_case(name)
+                } else {
+                    e.table.name == name
+                }
+        })
+    };
+    let split = |list: Option<String>| -> Vec<String> {
+        list.map(|l| l.split('\u{1f}').map(str::to_string).collect())
+            .unwrap_or_default()
+    };
+    let mut found = Vec::new();
+    for row in keys.rows {
+        let mut row = row.into_iter();
+        let mut next = || row.next().flatten();
+        let (from_schema, from, to_schema, to, from_columns, to_columns) =
+            (next(), next(), next(), next(), next(), next());
+        let (Some(from), Some(to)) = (from, to) else {
+            continue;
+        };
+        // Keys of tables that the diagram does not show, such as partitions, are left out.
+        let (Some(from), Some(to)) = (find(&from_schema, &from), find(&to_schema, &to)) else {
+            continue;
+        };
+        let mut to_columns = split(to_columns);
+        if to_columns.is_empty() {
+            to_columns = out.tables[to]
+                .columns
+                .iter()
+                .filter(|c| c.primary_key)
+                .map(|c| c.name.clone())
+                .collect();
+        }
+        found.push(Key {
+            from,
+            from_columns: split(from_columns),
+            to,
+            to_columns,
+        });
+    }
+    out.keys = found;
+    Ok(out)
+}
+
 pub async fn columns(db: Db, table: Table) -> Result<Vec<Column>, String> {
     match db {
         Db::Postgres(_) => {
@@ -1331,6 +1512,49 @@ mod tests {
             "{error}"
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn sqlite_relations_list_tables_and_keys() {
+        let db = connect(memory()).await.unwrap().db;
+        execute(
+            db.clone(),
+            "create table customers (id integer primary key, name text); \
+             create table parts (a int, b int, primary key (a, b)); \
+             create table orders (id integer primary key, \
+               customer_id integer references Customers, \
+               part_a int, part_b int, parent_id int references orders(id), \
+               foreign key (part_a, part_b) references parts (a, b));"
+                .into(),
+        )
+        .await
+        .unwrap();
+        let r = relations(db).await.unwrap();
+        let names: Vec<_> = r.tables.iter().map(|t| t.table.name.as_str()).collect();
+        assert_eq!(names, ["customers", "orders", "parts"]);
+        assert!(r.tables[0].columns[0].primary_key);
+        assert_eq!(r.tables[1].columns[1].data_type, "INTEGER");
+        let mut keys: Vec<_> = r
+            .keys
+            .iter()
+            .map(|k| {
+                (
+                    names[k.from],
+                    k.from_columns.join(","),
+                    names[k.to],
+                    k.to_columns.join(","),
+                )
+            })
+            .collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            [
+                ("orders", "customer_id".into(), "customers", "id".into()),
+                ("orders", "parent_id".into(), "orders", "id".into()),
+                ("orders", "part_a,part_b".into(), "parts", "a,b".into()),
+            ]
+        );
     }
 
     #[tokio::test]

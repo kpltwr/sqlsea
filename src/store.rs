@@ -187,13 +187,18 @@ pub struct HistoryEntry {
     pub millis: u64,
 }
 
-fn history_path(id: &str) -> Option<PathBuf> {
+/// The file of a connection in `folder`, such as its history.
+fn connection_file(folder: &str, id: &str) -> Option<PathBuf> {
     // Ids are generated, but remove all characters that can name another folder.
     let safe: String = id
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
         .collect();
-    Some(dir()?.join("history").join(format!("{safe}.json")))
+    Some(dir()?.join(folder).join(format!("{safe}.json")))
+}
+
+fn history_path(id: &str) -> Option<PathBuf> {
+    connection_file("history", id)
 }
 
 /// A connection's past queries, newest first.
@@ -215,10 +220,18 @@ pub fn record(history: &mut Vec<HistoryEntry>, entry: HistoryEntry) {
 /// SQL can be sensitive, so only the owner can read the history file.
 pub fn save_history(id: &str, history: &[HistoryEntry]) -> Result<(), String> {
     let path = history_path(id).ok_or("No config directory on this system.")?;
+    write_private(
+        &path,
+        &serde_json::to_vec(history).map_err(|e| e.to_string())?,
+    )
+}
+
+/// Writes a file that only the owner can read. A crash in the middle of the
+/// write leaves the old file.
+fn write_private(path: &std::path::Path, json: &[u8]) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    let json = serde_json::to_vec(history).map_err(|e| e.to_string())?;
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
     #[cfg(unix)]
@@ -227,13 +240,39 @@ pub fn save_history(id: &str, history: &[HistoryEntry]) -> Result<(), String> {
         std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
             .map_err(|e| e.to_string())?;
     }
-    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+    std::fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
-pub fn delete_history(id: &str) {
+/// Removes the history and the diagram places of a connection that is deleted.
+pub fn delete_connection_files(id: &str) {
     if let Some(path) = history_path(id) {
         let _ = std::fs::remove_file(path);
     }
+    if let Some(path) = connection_file("diagrams", id) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+// ---------- diagram places ----------
+
+/// The places of the tables that were moved by hand in the diagram: by schema,
+/// then by table. SQLite uses the schema "".
+pub type Places =
+    std::collections::BTreeMap<String, std::collections::BTreeMap<String, (f32, f32)>>;
+
+pub fn load_places(id: &str) -> Places {
+    connection_file("diagrams", id)
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_places(id: &str, places: &Places) -> Result<(), String> {
+    let path = connection_file("diagrams", id).ok_or("No config directory on this system.")?;
+    write_private(
+        &path,
+        &serde_json::to_vec(places).map_err(|e| e.to_string())?,
+    )
 }
 
 pub fn now() -> u64 {

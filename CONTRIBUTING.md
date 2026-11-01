@@ -63,6 +63,7 @@ SQLSEA_SSH_PORT=2222 SQLSEA_SSH_DIR=path/to/keys cargo test -- --ignored ssh_tun
 | `src/guard.rs` | Splits SQL into statements, and finds statements that change all rows |
 | `src/chrome.rs` | The title bar controls and resize edges on Linux |
 | `src/mark.rs` | The close mark, drawn as two lines |
+| `src/diagram.rs` | The relationship diagram: its layout, drawing, drag and zoom |
 | `src/theme.rs` | All colors, fonts and sizes, for light and dark |
 | `brand/` | Icons and logos. Read `brand/BRAND.md`. |
 | `packaging/` | Release packages, one folder for each system |
@@ -78,7 +79,7 @@ SQLSEA_SIZE=1024x700 SQLSEA_SCRIPT="table:users;row:2;shot:/tmp/a.png;quit" \
   cargo run --features shot -- ~/data/app.db
 ```
 
-The app runs one step every 1.2 seconds. The steps are `table:<name>`, `tab:data|structure|query`, `row:<n>` (open a row in the row panel), `add`, `edit:<field>=<value>`, `save`, `delete`, `sql:<text>`, `run`, `cancel`, `newtab`, `closetab:<id>`, `history`, `usehist:<n>`, `copy`, `move:up|down|pageup|pagedown|first|last`, `filter:<text>`, `applyfilter`, `anyway`, `readonly:on|off`, `url:<text>`, `applyurl`, `search:<text>`, `structure:columns|indexes|keys|refs|sql`, `complete:<n>`, `select:<n>`, `editcell:<row>,<column>`, `cellvalue:<text>`, `commitcell`, `cellnull`, `markdelete`, `review`, `savechanges`, `discardchanges`, `formend`, `scrollquery:<y>`, `pick:<n>`, `kind:pg|sqlite`, `connect`, `forget`, `mode:auto|light|dark`, `shot:<path.png>` and `quit`.
+The app runs one step every 1.2 seconds. The steps are `table:<name>`, `tab:data|structure|query|diagram`, `schema:<name>` (the schema of the diagram), `arrange`, `row:<n>` (open a row in the row panel), `add`, `edit:<field>=<value>`, `save`, `delete`, `sql:<text>`, `run`, `cancel`, `newtab`, `closetab:<id>`, `history`, `usehist:<n>`, `copy`, `move:up|down|pageup|pagedown|first|last`, `filter:<text>`, `applyfilter`, `anyway`, `readonly:on|off`, `url:<text>`, `applyurl`, `search:<text>`, `structure:columns|indexes|keys|refs|sql`, `complete:<n>`, `select:<n>`, `editcell:<row>,<column>`, `cellvalue:<text>`, `commitcell`, `cellnull`, `markdelete`, `review`, `savechanges`, `discardchanges`, `formend`, `scrollquery:<y>`, `pick:<n>`, `kind:pg|sqlite`, `connect`, `forget`, `mode:auto|light|dark`, `shot:<path.png>` and `quit`.
 
 If the screenshots fail, set `ICED_BACKEND=tiny-skia` to use the CPU renderer.
 

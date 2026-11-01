@@ -5,7 +5,10 @@
 
 use iced::border::{self, Radius};
 use iced::font::{Family, Weight};
-use iced::widget::{button, checkbox, container, scrollable, text, text_editor, text_input};
+use iced::overlay::menu;
+use iced::widget::{
+    button, checkbox, container, pick_list, scrollable, text, text_editor, text_input,
+};
 use iced::{Background, Border, Color, Font, Shadow, Theme, Vector};
 
 const fn rgb(r: u8, g: u8, b: u8) -> Color {
@@ -704,6 +707,80 @@ pub fn mark_muted(theme: &Theme) -> Color {
 /// The close mark in the title bar.
 pub fn mark_ink2(theme: &Theme) -> Color {
     colors(theme).ink2
+}
+
+// ---------- relationship diagram ----------
+
+/// The colors of the relationship diagram, which draws on a canvas.
+pub struct Diagram {
+    pub card: Color,
+    pub header: Color,
+    pub border: Color,
+    pub title: Color,
+    pub column: Color,
+    pub muted: Color,
+    pub key: Color,
+    pub line: Color,
+    /// The hovered table and its keys.
+    pub focus: Color,
+    pub focus_header: Color,
+}
+
+pub fn diagram(theme: &Theme) -> Diagram {
+    let c = colors(theme);
+    Diagram {
+        card: c.paper,
+        header: c.paper3,
+        border: c.rule2,
+        title: c.ink,
+        column: c.ink2,
+        muted: c.muted,
+        key: if theme.extended_palette().is_dark {
+            c.accent2
+        } else {
+            c.accent
+        },
+        line: c.muted,
+        focus: c.accent,
+        focus_header: c.accent_wash,
+    }
+}
+
+pub fn diagram_area(theme: &Theme) -> container::Style {
+    fill(colors(theme).paper2)
+}
+
+/// A list to choose one value from, such as the schema of the diagram.
+pub fn choice(theme: &Theme, status: pick_list::Status) -> pick_list::Style {
+    let c = colors(theme);
+    let border = match status {
+        pick_list::Status::Active => c.rule2,
+        pick_list::Status::Hovered | pick_list::Status::Opened { .. } => c.key_edge,
+    };
+    pick_list::Style {
+        text_color: c.ink,
+        placeholder_color: c.muted,
+        handle_color: c.muted,
+        background: Background::Color(c.key_face),
+        border: hair(border, RADIUS_INPUT),
+    }
+}
+
+/// The open menu of a `choice` list.
+pub fn choice_menu(theme: &Theme) -> menu::Style {
+    let c = colors(theme);
+    menu::Style {
+        background: Background::Color(c.paper),
+        border: hair(c.rule2, RADIUS_INPUT),
+        text_color: c.ink,
+        selected_text_color: c.on_wash,
+        selected_background: Background::Color(c.accent_wash),
+        shadow: Shadow {
+            color: c.shadow,
+            offset: Vector::new(0.0, 4.0),
+            blur_radius: 12.0,
+        },
+    }
 }
 
 // ---------- inputs ----------

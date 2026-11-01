@@ -4,6 +4,7 @@
 mod chrome;
 mod db;
 mod export;
+mod fit;
 mod grid;
 mod query;
 mod sql;
@@ -13,12 +14,13 @@ mod tls;
 
 use iced::keyboard::{self, Key, key::Named};
 use iced::widget::{
-    Column, Row, button, column, container, operation, row, scrollable, space, svg, text,
-    text_editor, text_input,
+    Column, Row, button, column, container, operation, responsive, row, scrollable, space, svg,
+    text, text_editor, text_input,
 };
 use iced::{Center, Element, Fill, Length, Padding, Subscription, Task};
 
 use db::{Config, Db, Kind, Page, ResultSet, Table, Tls};
+use fit::fit;
 use store::Appearance;
 
 const PAGE: u64 = 200;
@@ -39,8 +41,8 @@ fn main() -> iced::Result {
         .subscription(App::subscription)
         .default_font(theme::BODY)
         .window(iced::window::Settings {
-            size: iced::Size::new(1280.0, 800.0),
-            min_size: Some(iced::Size::new(900.0, 560.0)),
+            size: window_size(),
+            min_size: Some(iced::Size::new(760.0, 520.0)),
             icon: window_icon(),
             // On Linux the app draws its own title bar; see `chrome`.
             decorations: !chrome::CUSTOM,
@@ -56,6 +58,19 @@ fn main() -> iced::Result {
         app = app.font(font);
     }
     app.run()
+}
+
+/// 1280 by 800; screenshot builds take `SQLSEA_SIZE=WxH` to test other sizes.
+fn window_size() -> iced::Size {
+    #[cfg(feature = "shot")]
+    if let Some((w, h)) = std::env::var("SQLSEA_SIZE")
+        .ok()
+        .and_then(|s| s.split_once('x').map(|(w, h)| (w.parse(), h.parse())))
+        .and_then(|(w, h)| Some((w.ok()?, h.ok()?)))
+    {
+        return iced::Size::new(w, h);
+    }
+    iced::Size::new(1280.0, 800.0)
 }
 
 fn window_icon() -> Option<iced::window::Icon> {
@@ -539,19 +554,19 @@ impl App {
             text("No saved connections yet. Fill in the form to add your first one.")
                 .size(theme::TEXT_MD)
                 .style(theme::text_muted)
+                .wrapping(text::Wrapping::WordOrGlyph)
                 .into()
         } else {
             Column::with_children(self.saved.iter().enumerate().map(|(i, c)| {
                 button(
                     column![
-                        text(c.name.as_str())
+                        fit(c.name.as_str())
                             .font(theme::BODY_MEDIUM)
                             .size(theme::TEXT_MD),
-                        text(c.target())
+                        fit(c.target())
                             .font(theme::MONO)
                             .size(theme::TEXT_XS)
-                            .style(theme::text_muted)
-                            .wrapping(text::Wrapping::None),
+                            .style(theme::text_muted),
                     ]
                     .spacing(2),
                 )
@@ -576,8 +591,7 @@ impl App {
             .align_y(Center),
             scrollable(list).style(theme::scroller).height(Fill),
         ]
-        .spacing(16)
-        .width(300);
+        .spacing(16);
 
         let f = &self.form;
         let kind = container(
@@ -610,12 +624,8 @@ impl App {
                         labelled("User", input("postgres", &f.user, Message::FormUser)),
                         labelled(
                             "Password",
-                            input(
-                                "Kept in the system keyring",
-                                &f.password,
-                                Message::FormPassword
-                            )
-                            .secure(true)
+                            input("Kept in your keyring", &f.password, Message::FormPassword)
+                                .secure(true)
                         ),
                     ]
                     .spacing(12),
@@ -729,12 +739,20 @@ impl App {
             .spacing(18),
         )
         .padding(24)
-        .width(480)
+        .width(Fill)
         .style(theme::panel);
         // On short windows the form scrolls rather than spilling off the bottom.
-        let form = scrollable(form).style(theme::scroller);
+        let form = scrollable(form).style(theme::scroller).width(Fill);
 
-        let body = container(row![saved, form].spacing(40))
+        // The list and the form share the width two to three, up to their own maximums.
+        let columns = row![
+            container(saved)
+                .width(Length::FillPortion(2))
+                .max_width(320),
+            container(form).width(Length::FillPortion(3)).max_width(480),
+        ]
+        .spacing(32);
+        let body = container(container(columns).max_width(832))
             .center_x(Fill)
             .padding(Padding::from([32.0, 24.0]))
             .height(Fill);
@@ -1063,7 +1081,11 @@ impl Session {
             Message::NewQuery => {
                 self.queries.add();
                 self.tab = Tab::Query;
-                return operation::focus("sql");
+                // The new tab is last; bring it into view in the tab strip.
+                return Task::batch([
+                    operation::focus("sql"),
+                    operation::snap_to("query-tabs", operation::RelativeOffset::END),
+                ]);
             }
             Message::CloseQuery(id) => self.queries.close(id),
             Message::SelectQuery(id) => {
@@ -1263,20 +1285,23 @@ impl Session {
         let bar = top_bar(
             row![
                 vrule_short(),
-                text(self.config.name.as_str())
+                fit(self.config.name.as_str())
                     .font(theme::BODY_MEDIUM)
-                    .size(theme::TEXT_MD),
-                text(self.config.target())
+                    .size(theme::TEXT_MD)
+                    .max_width(280.0),
+                fit(self.config.target())
                     .font(theme::MONO)
                     .size(theme::TEXT_XS)
-                    .style(theme::text_muted),
+                    .style(theme::text_muted)
+                    .width(Fill),
                 text(match self.encrypted {
                     Some(true) => "Encrypted",
                     Some(false) => "Not encrypted",
                     None => "",
                 })
                 .size(theme::TEXT_XS)
-                .style(theme::text_muted),
+                .style(theme::text_muted)
+                .wrapping(text::Wrapping::None),
             ]
             .spacing(12)
             .align_y(Center),
@@ -1291,28 +1316,32 @@ impl Session {
             appearance,
         );
 
-        let mut middle = row![
-            container(self.sidebar())
-                .width(260)
-                .height(Fill)
-                .style(theme::sidebar),
-            vrule(),
-            container(self.main()).width(Fill).height(Fill),
-        ];
-        if self.tab == Tab::Data
-            && let Some(ins) = &self.inspector
-        {
-            middle = middle.push(vrule()).push(self.inspector_view(ins));
-        }
+        let middle = responsive(move |size| {
+            let panel_open = match self.tab {
+                Tab::Data => self.inspector.is_some(),
+                Tab::Query => self.queries.show_history,
+                Tab::Structure => false,
+            };
+            let widths = Widths::for_width(size.width, panel_open);
+            let mut middle = row![
+                container(self.sidebar())
+                    .width(widths.sidebar)
+                    .height(Fill)
+                    .style(theme::sidebar),
+                vrule(),
+                container(self.main(widths)).width(Fill).height(Fill),
+            ];
+            if self.tab == Tab::Data
+                && let Some(ins) = &self.inspector
+            {
+                middle = middle
+                    .push(vrule())
+                    .push(self.inspector_view(ins, widths.panel));
+            }
+            middle.height(Fill).into()
+        });
 
-        column![
-            bar,
-            hrule(),
-            middle.height(Fill),
-            hrule(),
-            self.status_bar()
-        ]
-        .into()
+        column![bar, hrule(), middle, hrule(), self.status_bar()].into()
     }
 
     fn sidebar(&self) -> Element<'_, Message> {
@@ -1349,7 +1378,7 @@ impl Session {
                         if many_schemas && last_schema != Some(&t.schema) {
                             list = list.push(
                                 container(
-                                    text(t.schema.as_deref().unwrap_or(""))
+                                    fit(t.schema.as_deref().unwrap_or(""))
                                         .font(theme::LABEL)
                                         .size(theme::TEXT_XS)
                                         .style(theme::text_muted),
@@ -1359,15 +1388,11 @@ impl Session {
                             last_schema = Some(&t.schema);
                         }
                         let selected = self.current.as_ref() == Some(t);
-                        let mut label = row![
-                            text(t.name.as_str())
-                                .size(theme::TEXT_MD)
-                                .wrapping(text::Wrapping::None)
-                        ]
-                        .align_y(Center);
+                        let mut label = row![fit(t.name.as_str()).size(theme::TEXT_MD).width(Fill)]
+                            .spacing(8)
+                            .align_y(Center);
                         if t.is_view {
                             label = label
-                                .push(space::horizontal())
                                 .push(text("view").size(theme::TEXT_XS).style(theme::text_muted));
                         }
                         list = list.push(
@@ -1386,7 +1411,8 @@ impl Session {
         column![filter, list].spacing(12).padding(12).into()
     }
 
-    fn main(&self) -> Element<'_, Message> {
+    fn main(&self, widths: Widths) -> Element<'_, Message> {
+        let density = widths.density();
         let tab = |label: &'static str, which: Tab| {
             let active = self.tab == which;
             column![
@@ -1414,35 +1440,50 @@ impl Session {
         };
 
         let tools: Element<_> = match self.tab {
-            Tab::Data => self.data_tools(),
+            Tab::Data => self.data_tools(density, widths.main),
             Tab::Structure => space().into(),
-            Tab::Query => self.queries.tools(),
+            Tab::Query => self.queries.tools(density),
         };
 
-        let strip = container(
+        let tabs = row![
+            tab("Data", Tab::Data),
+            tab("Structure", Tab::Structure),
+            tab("Query", Tab::Query),
+        ]
+        .spacing(4);
+        // On a narrow main area the tools get a line of their own under the tabs.
+        let strip: Element<_> = if density == Density::Narrow {
+            column![
+                tabs,
+                container(tools)
+                    .align_right(Fill)
+                    .padding(Padding::from([6.0, 0.0])),
+            ]
+            .into()
+        } else {
             row![
-                tab("Data", Tab::Data),
-                tab("Structure", Tab::Structure),
-                tab("Query", Tab::Query),
+                tabs,
                 space::horizontal(),
                 container(tools).padding(Padding::ZERO.bottom(6.0)),
             ]
             .spacing(4)
-            .align_y(iced::Bottom),
-        )
-        .padding(Padding::from([0.0, 12.0]).top(8.0))
-        .width(Fill);
+            .align_y(iced::Bottom)
+            .into()
+        };
+        let strip = container(strip)
+            .padding(Padding::from([0.0, 12.0]).top(8.0))
+            .width(Fill);
 
         let content = match self.tab {
             Tab::Data => self.data_view(),
             Tab::Structure => self.structure_view(),
-            Tab::Query => self.queries.view(),
+            Tab::Query => self.queries.view(widths.main, widths.panel),
         };
 
         column![strip, hrule(), content].into()
     }
 
-    fn data_tools(&self) -> Element<'_, Message> {
+    fn data_tools(&self, density: Density, width: f32) -> Element<'_, Message> {
         let Some(page) = self.page.ready() else {
             return space().into();
         };
@@ -1458,24 +1499,35 @@ impl Session {
             )
         };
         let can_add = self.current.as_ref().is_some_and(|t| !t.is_view);
-        row![
-            muted(range),
-            small_key(
-                "Previous",
+        let short = density != Density::Full;
+        let mut tools = row![].spacing(8).align_y(Center);
+        // The row count is also in the status bar, so it goes first when space runs out.
+        if density != Density::Narrow || width >= 440.0 {
+            tools = tools.push(
+                text(range)
+                    .size(theme::TEXT_SM)
+                    .style(theme::text_muted)
+                    .wrapping(text::Wrapping::None),
+            );
+        }
+        tools
+            .push(small_key(
+                if short { "Prev" } else { "Previous" },
                 theme::key,
-                (self.offset > 0).then_some(Message::PrevPage)
-            ),
-            small_key(
+                (self.offset > 0).then_some(Message::PrevPage),
+            ))
+            .push(small_key(
                 "Next",
                 theme::key,
-                (self.offset + shown < page.total).then_some(Message::NextPage)
-            ),
-            small_key("Add row", theme::key, can_add.then_some(Message::AddRow)),
-            small_key("Export", theme::key, Some(Message::ExportTable)),
-        ]
-        .spacing(8)
-        .align_y(Center)
-        .into()
+                (self.offset + shown < page.total).then_some(Message::NextPage),
+            ))
+            .push(small_key(
+                if short { "Add" } else { "Add row" },
+                theme::key,
+                can_add.then_some(Message::AddRow),
+            ))
+            .push(small_key("Export", theme::key, Some(Message::ExportTable)))
+            .into()
     }
 
     fn data_view(&self) -> Element<'_, Message> {
@@ -1520,7 +1572,7 @@ impl Session {
         }
     }
 
-    fn inspector_view<'a>(&'a self, ins: &'a Inspector) -> Element<'a, Message> {
+    fn inspector_view<'a>(&'a self, ins: &'a Inspector, width: f32) -> Element<'a, Message> {
         let Some(columns) = self.columns.ready() else {
             return space().into();
         };
@@ -1533,35 +1585,37 @@ impl Session {
         let head = row![
             column![
                 text(title).font(theme::DISPLAY).size(theme::TEXT_LG),
-                text(self.current.as_ref().map(|t| t.name.as_str()).unwrap_or(""))
+                fit(self.current.as_ref().map(|t| t.name.as_str()).unwrap_or(""))
                     .font(theme::MONO)
                     .size(theme::TEXT_XS)
                     .style(theme::text_muted),
             ]
-            .spacing(2),
-            space::horizontal(),
+            .spacing(2)
+            .width(Fill),
             small_key("Close", theme::ghost, Some(Message::CloseInspector)),
         ]
         .align_y(Center);
 
         let fields = Column::with_children(columns.iter().zip(&ins.fields).enumerate().map(
             |(i, (col, field))| {
+                // The name keeps most of the line; the type takes what is left.
                 let mut label = row![
-                    text(col.name.as_str())
+                    fit(col.name.as_str())
                         .font(theme::LABEL)
                         .size(theme::TEXT_SM)
-                        .style(theme::text_ink2),
-                    text(col.data_type.as_str())
+                        .style(theme::text_ink2)
+                        .max_width(width * 0.55),
+                    fit(col.data_type.as_str())
                         .font(theme::MONO)
                         .size(theme::TEXT_XS)
-                        .style(theme::text_muted),
+                        .style(theme::text_muted)
+                        .width(Fill),
                 ]
                 .spacing(8)
                 .align_y(Center);
                 if col.primary_key {
                     label = label.push(text("key").size(theme::TEXT_XS).style(theme::text_muted));
                 }
-                label = label.push(space::horizontal());
                 if editable && col.nullable {
                     label = label.push(
                         button(text("NULL").font(theme::MONO).size(11))
@@ -1605,6 +1659,7 @@ impl Session {
         .spacing(14);
 
         let changed = ins.fields.iter().any(Field::changed);
+        let mut confirm = None;
         let footer: Element<_> = if !editable {
             muted(match self.current.as_ref().is_some_and(|t| t.is_view) {
                 true => "Views are read-only here.",
@@ -1632,13 +1687,23 @@ impl Session {
             ]
             .spacing(8);
             if ins.row.is_some() && ins.confirm_delete {
-                actions = actions
-                    .push(small_key("Cancel", theme::key, Some(Message::CancelDelete)))
-                    .push(small_key(
-                        "Delete row",
-                        theme::key_danger_armed,
-                        (!ins.saving).then_some(Message::DeleteRow),
-                    ));
+                // The confirmation gets its own line, so a narrow panel still fits it.
+                confirm = Some(
+                    row![
+                        fit("Delete this row?")
+                            .size(theme::TEXT_SM)
+                            .style(theme::text_muted)
+                            .width(Fill),
+                        small_key("Cancel", theme::key, Some(Message::CancelDelete)),
+                        small_key(
+                            "Delete row",
+                            theme::key_danger_armed,
+                            (!ins.saving).then_some(Message::DeleteRow),
+                        ),
+                    ]
+                    .spacing(8)
+                    .align_y(Center),
+                );
             } else if ins.row.is_some() {
                 actions = actions.push(small_key(
                     "Delete",
@@ -1655,11 +1720,11 @@ impl Session {
                 scrollable(container(fields).padding(Padding::ZERO.right(12.0)))
                     .style(theme::scroller)
                     .height(Fill),
-                column![ins.error.as_deref().map(error_note), footer].spacing(12),
+                column![ins.error.as_deref().map(error_note), confirm, footer].spacing(12),
             ]
             .spacing(16),
         )
-        .width(340)
+        .width(width)
         .height(Fill)
         .padding(16)
         .style(theme::bar)
@@ -1668,15 +1733,17 @@ impl Session {
 
     fn status_bar(&self) -> Element<'_, Message> {
         let note: Element<_> = match &self.status {
-            Some(Notice::Ok(m)) => text(m.as_str())
+            Some(Notice::Ok(m)) => fit(m.as_str())
                 .size(theme::TEXT_XS)
                 .style(theme::text_ink2)
+                .width(Fill)
                 .into(),
-            Some(Notice::Error(e)) => text(e.as_str())
+            Some(Notice::Error(e)) => fit(e.as_str())
                 .size(theme::TEXT_XS)
                 .style(theme::text_error)
+                .width(Fill)
                 .into(),
-            None => space().into(),
+            None => space::horizontal().into(),
         };
         let figures: Vec<String> = match self.tab {
             Tab::Data => match self.page.ready() {
@@ -1709,7 +1776,7 @@ impl Session {
                     .font(theme::BODY),
             );
         }
-        container(row![note, space::horizontal(), right].align_y(Center))
+        container(row![note, right].spacing(20).align_y(Center))
             .padding(Padding::from([0.0, 12.0]))
             .height(28)
             .center_y(28)
@@ -1858,8 +1925,7 @@ fn top_bar<'a>(
             ]
             .spacing(8)
             .align_y(Center),
-            left.into(),
-            space::horizontal(),
+            container(left).width(Fill).clip(true),
             modes,
         ]
         .push(right)
@@ -1905,7 +1971,14 @@ fn small_key<'a>(
     on_press: Option<Message>,
 ) -> Element<'a, Message> {
     button(
-        container(text(label).font(theme::BODY_MEDIUM).size(theme::TEXT_SM)).center_y(Length::Fill),
+        // A key's label never wraps; the layouts around keys give way instead.
+        container(
+            text(label)
+                .font(theme::BODY_MEDIUM)
+                .size(theme::TEXT_SM)
+                .wrapping(text::Wrapping::None),
+        )
+        .center_y(Length::Fill),
     )
     .height(theme::CONTROL_H)
     .padding(Padding::from([0.0, 12.0]))
@@ -1953,7 +2026,11 @@ fn labelled<'a>(label: &'a str, field: impl Into<Element<'a, Message>>) -> Eleme
 }
 
 fn muted<'a>(s: impl text::IntoFragment<'a>) -> Element<'a, Message> {
-    text(s).size(theme::TEXT_SM).style(theme::text_muted).into()
+    text(s)
+        .size(theme::TEXT_SM)
+        .style(theme::text_muted)
+        .wrapping(text::Wrapping::WordOrGlyph)
+        .into()
 }
 
 /// An error: a plain first line when there is one, the database's words in mono.
@@ -1962,14 +2039,19 @@ fn error_note<'a>(message: &str) -> Element<'a, Message> {
         Some((plain, raw)) => column![
             text(plain.to_string())
                 .font(theme::BODY_MEDIUM)
-                .size(theme::TEXT_SM),
-            text(raw.to_string()).font(theme::MONO).size(theme::TEXT_XS),
+                .size(theme::TEXT_SM)
+                .wrapping(text::Wrapping::WordOrGlyph),
+            text(raw.to_string())
+                .font(theme::MONO)
+                .size(theme::TEXT_XS)
+                .wrapping(text::Wrapping::WordOrGlyph),
         ]
         .spacing(4)
         .into(),
         None => text(message.to_string())
             .font(theme::MONO)
             .size(theme::TEXT_SM)
+            .wrapping(text::Wrapping::WordOrGlyph)
             .into(),
     };
     container(body)
@@ -1983,10 +2065,15 @@ fn empty_state<'a>(
     message: impl text::IntoFragment<'a>,
     action: Option<Element<'a, Message>>,
 ) -> Element<'a, Message> {
-    let mut col = column![text(message).size(theme::TEXT_MD).style(theme::text_muted)]
-        .spacing(14)
-        .align_x(Center)
-        .max_width(420);
+    let mut col = column![
+        text(message)
+            .size(theme::TEXT_MD)
+            .style(theme::text_muted)
+            .wrapping(text::Wrapping::WordOrGlyph)
+    ]
+    .spacing(14)
+    .align_x(Center)
+    .max_width(420);
     if let Some(action) = action {
         col = col.push(action);
     }
@@ -2005,6 +2092,50 @@ fn empty_state_error<'a>(e: &str) -> Element<'a, Message> {
     .center(Fill)
     .padding(24)
     .into()
+}
+
+/// How much room the main area has, which sets how much its toolbar shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Density {
+    /// Everything, with full labels.
+    Full,
+    /// Shorter labels, fewer hints.
+    Compact,
+    /// The toolbar moves to its own line under the tabs.
+    Narrow,
+}
+
+/// Column widths for the session screen, from the width it has.
+#[derive(Debug, Clone, Copy)]
+struct Widths {
+    sidebar: f32,
+    /// The row panel or the history panel, when open.
+    panel: f32,
+    main: f32,
+}
+
+impl Widths {
+    fn for_width(total: f32, panel_open: bool) -> Self {
+        let sidebar = (total * 0.2).clamp(170.0, 260.0);
+        let panel = if panel_open {
+            (total * 0.3).clamp(260.0, 340.0)
+        } else {
+            0.0
+        };
+        Widths {
+            sidebar,
+            panel,
+            main: (total - sidebar - panel - 2.0).max(0.0),
+        }
+    }
+
+    fn density(self) -> Density {
+        match self.main {
+            w if w >= 780.0 => Density::Full,
+            w if w >= 620.0 => Density::Compact,
+            _ => Density::Narrow,
+        }
+    }
 }
 
 // ---------- screenshots for design review (cargo run --features shot) ----------

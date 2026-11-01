@@ -11,10 +11,11 @@ use iced::widget::{
 use iced::{Center, Element, Fill, Length, Padding};
 
 use crate::db::ResultSet;
+use crate::fit::fit;
 use crate::store::{self, HistoryEntry};
 use crate::{
-    Load, Message, QUERY_GRID, RUN_KEY, count, empty_state, error_note, grid, muted, small_key,
-    sql, theme, thousands,
+    Density, Load, Message, QUERY_GRID, RUN_KEY, count, empty_state, error_note, grid, muted,
+    small_key, sql, theme, thousands,
 };
 
 pub struct QueryTab {
@@ -169,12 +170,19 @@ impl Queries {
     // ---------- view ----------
 
     /// Controls for the main tab strip: history, export, and run or cancel.
-    pub fn tools(&self) -> Element<'_, Message> {
+    pub fn tools(&self, density: Density) -> Element<'_, Message> {
         let tab = self.active();
         let exportable = matches!(&tab.result, Load::Ready(rs) if !rs.columns.is_empty());
         let run: Element<_> = match tab.started {
             Some(started) => row![
-                muted(format!("Running {:.1} s", started.elapsed().as_secs_f32())),
+                text(if density == Density::Full {
+                    format!("Running {:.1} s", started.elapsed().as_secs_f32())
+                } else {
+                    format!("{:.1} s", started.elapsed().as_secs_f32())
+                })
+                .size(theme::TEXT_SM)
+                .style(theme::text_muted)
+                .wrapping(text::Wrapping::None),
                 small_key(
                     if tab.cancelling {
                         "Cancelling"
@@ -188,13 +196,17 @@ impl Queries {
             .spacing(12)
             .align_y(Center)
             .into(),
-            None => row![
-                muted(format!("{RUN_KEY}+Enter")),
+            None if density == Density::Full => row![
+                text(format!("{RUN_KEY}+Enter"))
+                    .size(theme::TEXT_SM)
+                    .style(theme::text_muted)
+                    .wrapping(text::Wrapping::None),
                 small_key("Run", theme::key_primary, Some(Message::Run)),
             ]
             .spacing(12)
             .align_y(Center)
             .into(),
+            None => small_key("Run", theme::key_primary, Some(Message::Run)),
         };
         row![
             toggle_key("History", self.show_history, Message::ToggleHistory),
@@ -210,7 +222,8 @@ impl Queries {
         .into()
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
+    /// `width` is the main area's; `panel` the history panel's, when open.
+    pub fn view(&self, width: f32, panel: f32) -> Element<'_, Message> {
         let tab = self.active();
         let running = tab.running();
         let editor = text_editor(&tab.editor)
@@ -277,7 +290,7 @@ impl Queries {
         };
 
         let work = column![
-            self.strip(),
+            self.strip(width),
             container(editor)
                 .height(Length::FillPortion(2))
                 .style(theme::graphite),
@@ -290,7 +303,7 @@ impl Queries {
                 container(space().width(1))
                     .height(Fill)
                     .style(theme::rule_h),
-                self.history_view(),
+                self.history_view(panel),
             ]
             .into()
         } else {
@@ -298,8 +311,9 @@ impl Queries {
         }
     }
 
-    /// The row of query tabs above the editor.
-    fn strip(&self) -> Element<'_, Message> {
+    /// The row of query tabs above the editor. Tabs scroll sideways when there
+    /// are more than fit, and New stays in view.
+    fn strip(&self, width: f32) -> Element<'_, Message> {
         let tabs = Row::with_children(self.tabs.iter().enumerate().map(|(i, tab)| {
             let active = i == self.active;
             let close = button(
@@ -333,6 +347,15 @@ impl Queries {
             .style(theme::ghost)
             .on_press(Message::NewQuery);
 
+        let tabs = container(
+            scrollable(tabs)
+                .direction(scrollable::Direction::Horizontal(
+                    scrollable::Scrollbar::hidden(),
+                ))
+                .id("query-tabs"),
+        )
+        .max_width((width - 96.0).max(120.0));
+
         container(row![tabs, add].spacing(6).align_y(Center))
             .padding(Padding::from([4.0, 8.0]).bottom(0.0))
             .width(Fill)
@@ -340,7 +363,7 @@ impl Queries {
             .into()
     }
 
-    fn history_view(&self) -> Element<'_, Message> {
+    fn history_view(&self, width: f32) -> Element<'_, Message> {
         let head = row![
             text("History").font(theme::DISPLAY).size(theme::TEXT_LG),
             space::horizontal(),
@@ -362,68 +385,63 @@ impl Queries {
             .filter(|(_, e)| needle.is_empty() || e.sql.to_lowercase().contains(&needle))
             .collect();
 
-        let list: Element<_> = if self.history.is_empty() {
-            muted("Queries you run on this connection show here.")
-        } else if shown.is_empty() {
-            muted(format!(
-                "No query matches “{}”.",
-                self.history_filter.trim()
-            ))
-        } else {
-            let now = store::now();
-            scrollable(
-                Column::with_children(shown.into_iter().map(|(i, entry)| {
-                    let preview: String = entry
-                        .sql
-                        .trim()
-                        .lines()
-                        .take(3)
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    let outcome = match (entry.ok, entry.rows) {
-                        (false, _) => "Failed".to_string(),
-                        (true, Some(n)) => count(n, "row"),
-                        (true, None) => "Ran".to_string(),
-                    };
-                    button(
-                        column![
-                            text(preview)
-                                .font(theme::MONO)
-                                .size(theme::TEXT_XS)
-                                .wrapping(text::Wrapping::None),
-                            row![
-                                text(ago(now, entry.at))
-                                    .size(theme::TEXT_XS)
-                                    .style(theme::text_muted),
-                                text(outcome).size(theme::TEXT_XS).style(if entry.ok {
-                                    theme::text_muted
-                                } else {
-                                    theme::text_error
-                                }),
-                                text(format!("{} ms", thousands(entry.millis)))
-                                    .size(theme::TEXT_XS)
-                                    .style(theme::text_muted),
+        let list: Element<_> =
+            if self.history.is_empty() {
+                muted("Queries you run on this connection show here.")
+            } else if shown.is_empty() {
+                muted(format!(
+                    "No query matches “{}”.",
+                    self.history_filter.trim()
+                ))
+            } else {
+                let now = store::now();
+                scrollable(
+                    Column::with_children(shown.into_iter().map(|(i, entry)| {
+                        let preview =
+                            Column::with_children(entry.sql.trim().lines().take(3).map(|line| {
+                                fit(line).font(theme::MONO).size(theme::TEXT_XS).into()
+                            }));
+                        let outcome = match (entry.ok, entry.rows) {
+                            (false, _) => "Failed".to_string(),
+                            (true, Some(n)) => count(n, "row"),
+                            (true, None) => "Ran".to_string(),
+                        };
+                        button(
+                            column![
+                                preview,
+                                row![
+                                    text(ago(now, entry.at))
+                                        .size(theme::TEXT_XS)
+                                        .style(theme::text_muted),
+                                    text(outcome).size(theme::TEXT_XS).style(if entry.ok {
+                                        theme::text_muted
+                                    } else {
+                                        theme::text_error
+                                    }),
+                                    text(format!("{} ms", thousands(entry.millis)))
+                                        .size(theme::TEXT_XS)
+                                        .style(theme::text_muted),
+                                ]
+                                .spacing(12),
                             ]
-                            .spacing(12),
-                        ]
-                        .spacing(6),
-                    )
-                    .width(Fill)
-                    .padding(Padding::from([8.0, 10.0]))
-                    .style(theme::list_row(false))
-                    .on_press(Message::UseHistory(i))
-                    .into()
-                }))
-                .spacing(2)
-                .padding(Padding::ZERO.right(10.0)),
-            )
-            .style(theme::scroller)
-            .height(Fill)
-            .into()
-        };
+                            .spacing(6),
+                        )
+                        .width(Fill)
+                        .padding(Padding::from([8.0, 10.0]))
+                        .style(theme::list_row(false))
+                        .on_press(Message::UseHistory(i))
+                        .into()
+                    }))
+                    .spacing(2)
+                    .padding(Padding::ZERO.right(10.0)),
+                )
+                .style(theme::scroller)
+                .height(Fill)
+                .into()
+            };
 
         container(column![head, filter, list].spacing(12))
-            .width(320)
+            .width(width)
             .height(Fill)
             .padding(16)
             .style(theme::bar)
@@ -434,7 +452,13 @@ impl Queries {
 /// A key that shows whether its panel is open.
 fn toggle_key(label: &str, on: bool, message: Message) -> Element<'_, Message> {
     button(
-        container(text(label).font(theme::BODY_MEDIUM).size(theme::TEXT_SM)).center_y(Length::Fill),
+        container(
+            text(label)
+                .font(theme::BODY_MEDIUM)
+                .size(theme::TEXT_SM)
+                .wrapping(text::Wrapping::None),
+        )
+        .center_y(Length::Fill),
     )
     .height(theme::CONTROL_H)
     .padding(Padding::from([0.0, 12.0]))

@@ -15,6 +15,8 @@ const MAX_W: f32 = 360.0;
 /// Rows sampled when sizing columns.
 const SAMPLE: usize = 200;
 const MAX_CHARS: usize = 160;
+/// Width of an embedded scrollbar: 8 plus a margin either side.
+const BAR: f32 = 10.0;
 
 pub struct Grid<'a, M> {
     pub result: &'a ResultSet,
@@ -44,7 +46,8 @@ fn widths(rs: &ResultSet) -> Vec<f32> {
                         .map_or(4, |v| first_line(v).0.chars().count())
                 })
                 .max()
-                .unwrap_or(0) as f32
+                // One spare character, matching the margin cells keep for "…".
+                .map_or(0, |n| n + 1) as f32
                 * theme::MONO_ADVANCE;
             (head.max(body) + PAD_X * 2.0).clamp(MIN_W, MAX_W)
         })
@@ -75,11 +78,13 @@ pub fn view<'a, M: Clone + 'a>(grid: Grid<'a, M>) -> Element<'a, M> {
 
     responsive(move |size| {
         let mut widths = base.clone();
+        // The vertical scrollbar takes its own strip, so rows never run under it.
+        let room = size.width - BAR;
         let total: f32 = widths.iter().sum();
-        if total < size.width
+        if total < room
             && let Some(last) = widths.last_mut()
         {
-            *last += size.width - total;
+            *last += room - total;
         }
         let total: f32 = widths.iter().sum();
 
@@ -90,8 +95,10 @@ pub fn view<'a, M: Clone + 'a>(grid: Grid<'a, M>) -> Element<'a, M> {
                 _ => "",
             };
             let label = row![
-                text(name.as_str()).font(theme::LABEL).size(theme::TEXT_XS),
-                space::horizontal(),
+                crate::fit::fit(name.as_str())
+                    .font(theme::LABEL)
+                    .size(theme::TEXT_XS)
+                    .width(Fill),
                 text(mark)
                     .font(theme::LABEL)
                     .size(theme::TEXT_XS)
@@ -110,11 +117,18 @@ pub fn view<'a, M: Clone + 'a>(grid: Grid<'a, M>) -> Element<'a, M> {
             let cells = Row::with_children(values.iter().enumerate().map(|(i, v)| {
                 let cell: Element<'a, M> = match v {
                     Some(v) => {
-                        let (shown, cut) = first_line(v);
-                        let shown = if cut {
-                            format!("{shown}…")
+                        // Mono glyphs share one advance, so counting characters
+                        // is exact enough; one spare keeps "…" off the edge.
+                        let (line, cut) = first_line(v);
+                        let fits =
+                            (((widths[i] - PAD_X * 2.0) / theme::MONO_ADVANCE) as usize).max(2) - 1;
+                        let shown = if line.chars().count() > fits {
+                            let keep: String = line.chars().take(fits - 1).collect();
+                            format!("{}…", keep.trim_end())
+                        } else if cut {
+                            format!("{line}…")
                         } else {
-                            shown.to_string()
+                            line.to_string()
                         };
                         text(shown)
                             .font(theme::MONO)
@@ -152,7 +166,8 @@ pub fn view<'a, M: Clone + 'a>(grid: Grid<'a, M>) -> Element<'a, M> {
         let bar = scrollable::Scrollbar::new()
             .width(8)
             .scroller_width(6)
-            .margin(1);
+            .margin(1)
+            .spacing(0);
         let body = scrollable(rows)
             .id(body_id)
             .direction(scrollable::Direction::Both {

@@ -94,6 +94,9 @@ pub struct Config {
     /// cancelled. Empty means no limit.
     #[serde(default)]
     pub timeout: String,
+    /// The database refuses all changes on this connection.
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 impl Config {
@@ -239,6 +242,10 @@ pub async fn connect(config: Config) -> Result<Connected, String> {
             if !config.password.is_empty() {
                 pg.password(&config.password);
             }
+            if config.read_only {
+                // The server then refuses every statement that changes data.
+                pg.options("-c default_transaction_read_only=on");
+            }
 
             // The two connectors make different stream types, so each branch
             // starts its own connection task.
@@ -278,8 +285,20 @@ pub async fn connect(config: Config) -> Result<Connected, String> {
             if path.is_empty() {
                 return Err("Choose a database file.".into());
             }
+            let read_only = config.read_only;
             blocking(move || {
-                let conn = rusqlite::Connection::open(&path).map_err(sqlite_open_error)?;
+                let conn = if read_only {
+                    use rusqlite::OpenFlags;
+                    rusqlite::Connection::open_with_flags(
+                        &path,
+                        OpenFlags::SQLITE_OPEN_READ_ONLY
+                            | OpenFlags::SQLITE_OPEN_URI
+                            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+                    )
+                } else {
+                    rusqlite::Connection::open(&path)
+                }
+                .map_err(sqlite_open_error)?;
                 // SQLite opens any file without an error. The first read finds a bad file.
                 conn.query_row("select count(*) from sqlite_master", [], |_| Ok(()))
                     .map_err(sqlite_open_error)?;
@@ -387,13 +406,22 @@ pub async fn columns(db: Db, table: Table) -> Result<Vec<Column>, String> {
     }
 }
 
+/// One page of a table. `filter` is a condition for the `WHERE` clause.
 pub async fn page(
     db: Db,
     table: Table,
+    filter: Option<String>,
     order: Option<(String, bool)>,
     offset: u64,
     limit: u64,
 ) -> Result<Page, String> {
+    let filter = match filter {
+        Some(f) if !crate::guard::is_single(&f) => {
+            return Err("The filter must be one condition, without a semicolon.".into());
+        }
+        Some(f) => format!(" where {f}"),
+        None => String::new(),
+    };
     let order = match order {
         Some((column, asc)) => {
             format!(
@@ -405,11 +433,15 @@ pub async fn page(
         None => String::new(),
     };
     let sql = format!(
-        "select * from {}{order} limit {limit} offset {offset}",
+        "select * from {}{filter}{order} limit {limit} offset {offset}",
         table.qualified()
     );
     let result = execute(db.clone(), sql).await?;
-    let count = execute(db, format!("select count(*) from {}", table.qualified())).await?;
+    let count = execute(
+        db,
+        format!("select count(*) from {}{filter}", table.qualified()),
+    )
+    .await?;
     let total = count
         .rows
         .first()
@@ -529,9 +561,9 @@ fn sqlite_execute(
         .map_err(|_| "The database is busy.".to_string())?;
     let mut batch = rusqlite::Batch::new(&conn, sql);
     let mut out = ResultSet::default();
-    while let Some(mut stmt) = batch.next().map_err(|e| e.to_string())? {
+    while let Some(mut stmt) = batch.next().map_err(sqlite_error)? {
         if stmt.column_count() == 0 {
-            let n = stmt.execute([]).map_err(|e| e.to_string())?;
+            let n = stmt.execute([]).map_err(sqlite_error)?;
             out.affected = Some(n as u64);
             continue;
         }
@@ -541,8 +573,8 @@ fn sqlite_execute(
             columns,
             ..Default::default()
         };
-        let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
-        while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+        let mut rows = stmt.query([]).map_err(sqlite_error)?;
+        while let Some(row) = rows.next().map_err(sqlite_error)? {
             if rs.rows.len() >= cap {
                 rs.dropped += 1;
                 continue;
@@ -589,6 +621,7 @@ fn pg_error(e: tokio_postgres::Error) -> String {
                         "The server did not accept the user name or password. Correct them and connect again.",
                     )
                 }
+                c if *c == SqlState::READ_ONLY_SQL_TRANSACTION => Some(READ_ONLY),
                 c if *c == SqlState::UNDEFINED_DATABASE => {
                     Some("No database with this name is on the server. Correct the database name.")
                 }
@@ -609,6 +642,9 @@ fn pg_error(e: tokio_postgres::Error) -> String {
     };
     with_hint(plain, raw)
 }
+
+const READ_ONLY: &str =
+    "This connection is read-only. To change data, turn off Read-only for the connection.";
 
 /// Puts a plain sentence before the error text from the driver.
 fn with_hint(plain: Option<&str>, raw: String) -> String {
@@ -658,6 +694,13 @@ fn connection_hint(error: &str) -> Option<&'static str> {
         .into_iter()
         .find(|(needle, _)| error.contains(needle))
         .map(|(_, plain)| plain)
+}
+
+/// A SQLite error, with a plain sentence if the cause is a usual one.
+fn sqlite_error(e: rusqlite::Error) -> String {
+    let raw = e.to_string();
+    let plain = raw.contains("readonly database").then_some(READ_ONLY);
+    with_hint(plain, raw)
 }
 
 /// A plain sentence for SQLite files that do not open.
@@ -834,6 +877,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn read_only_sqlite_refuses_changes() {
+        let dir = std::env::temp_dir().join(format!("sqlsea-ro-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ro.db").display().to_string();
+        let writable = Config {
+            kind: Kind::Sqlite,
+            path: path.clone(),
+            ..Default::default()
+        };
+        let db = connect(writable.clone()).await.unwrap().db;
+        execute(db, "create table t (id integer primary key)".into())
+            .await
+            .unwrap();
+        let ro = Config {
+            read_only: true,
+            ..writable
+        };
+        let db = connect(ro).await.unwrap().db;
+        assert!(execute(db.clone(), "select * from t".into()).await.is_ok());
+        let error = execute(db, "insert into t values (1)".into())
+            .await
+            .unwrap_err();
+        assert!(
+            error.starts_with("This connection is read-only."),
+            "{error}"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn pages_can_be_filtered() {
+        let db = connect(memory()).await.unwrap().db;
+        execute(
+            db.clone(),
+            "create table t (id integer primary key, s text); \
+             insert into t (s) values ('a'), ('b'), ('a')"
+                .into(),
+        )
+        .await
+        .unwrap();
+        let table = Table {
+            schema: None,
+            name: "t".into(),
+            is_view: false,
+        };
+        let page = page(
+            db.clone(),
+            table.clone(),
+            Some("s = 'a'".into()),
+            None,
+            0,
+            10,
+        )
+        .await
+        .unwrap();
+        assert_eq!((page.total, page.result.rows.len()), (2, 2));
+        let error = page_err(db, table).await;
+        assert!(error.contains("one condition"), "{error}");
+    }
+
+    async fn page_err(db: Db, table: Table) -> String {
+        page(db, table, Some("1 = 1; delete from t".into()), None, 0, 10)
+            .await
+            .unwrap_err()
+    }
+
+    #[tokio::test]
     async fn time_limit_cancels() {
         let config = Config {
             timeout: "1".into(),
@@ -906,7 +1016,25 @@ mod tests {
         let missing = encrypted(pg(tls.clone(), "localhost", Tls::Verify, "/nope.pem"))
             .await
             .unwrap_err();
-        assert!(missing.contains("Could not read the CA"), "{missing}");
+        assert!(
+            missing.contains("CA certificate file did not open"),
+            "{missing}"
+        );
+
+        // A read-only connection reads, and the server refuses changes.
+        let read_only = Config {
+            read_only: true,
+            ..pg(plain.clone(), "localhost", Tls::Off, "")
+        };
+        let db = connect(read_only).await.unwrap().db;
+        assert!(execute(db.clone(), "select 1".into()).await.is_ok());
+        let refused = execute(db, "create table sqlsea_ro_test (id int)".into())
+            .await
+            .unwrap_err();
+        assert!(
+            refused.starts_with("This connection is read-only."),
+            "{refused}"
+        );
 
         // Cancel a running query over plain TCP and over verified TLS.
         for config in [

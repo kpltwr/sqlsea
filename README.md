@@ -49,11 +49,15 @@ On Linux, `cargo build --release && packaging/linux/install.sh` adds the build t
 
 To connect, fill in the form and click Connect. For a SQLite file or a CA certificate, you can type the path or click Browse. A connection that works is saved.
 
-The Data tab shows the open table, 200 rows on each page. Click a column head to sort by that column. Click a row to edit it in the panel on the right. Save writes only the fields that you changed. Add row inserts a row, and empty fields get their default values. You can edit rows only in tables that have a primary key. You cannot edit views.
+Select Read-only for a connection to a database that you must not change, such as a production database. The database then refuses all changes on that connection.
+
+The Data tab shows the open table, 200 rows on each page. Click a column head to sort by that column. To show only some rows, type a condition in the filter box, for example `status = 'paid'`, and press Enter. Click a row to edit it in the panel on the right. Save writes only the fields that you changed. Add row inserts a row, and empty fields get their default values. You can edit rows only in tables that have a primary key. You cannot edit views.
 
 The Structure tab shows the columns, their types and defaults, and the primary key.
 
 In the Query tab, write SQL and press Ctrl+Enter. If you select text, only that text runs. The result shows up to 5,000 rows. Each query tab keeps its own SQL and result. To stop a running query, click Cancel or press Esc. To stop long queries automatically, set a time limit in seconds for the connection.
+
+Before sqlsea runs an `UPDATE` or `DELETE` without a `WHERE` clause, a `TRUNCATE`, or a `DROP` of a table, schema or database, it asks you to confirm. These statements change or remove all rows. The check reads the SQL text only, so it does not find every risk.
 
 History keeps each query that you run, for each connection. Click a query in the history to put it back in the editor.
 
@@ -68,6 +72,8 @@ The top bar has the Auto, Light and Dark themes. Auto uses the theme of your des
 | Ctrl+C | Copy the selected row |
 | Ctrl+R | Reload the tables and the open table |
 | Ctrl+1, 2, 3 | Go to Data, Structure or Query |
+| Up, Down, Page Up, Page Down, Home, End | Move the row selection |
+| Enter | Open the selected row |
 | Esc | Stop the running query, or close the row panel |
 | Tab, Shift+Tab | Go to the next or previous field |
 

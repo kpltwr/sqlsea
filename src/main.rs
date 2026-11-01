@@ -6,6 +6,7 @@ mod db;
 mod export;
 mod fit;
 mod grid;
+mod guard;
 mod query;
 mod sql;
 mod store;
@@ -14,8 +15,8 @@ mod tls;
 
 use iced::keyboard::{self, Key, key::Named};
 use iced::widget::{
-    Column, Row, button, column, container, operation, responsive, row, scrollable, space, svg,
-    text, text_editor, text_input,
+    Column, Row, button, checkbox, column, container, operation, responsive, row, scrollable,
+    space, svg, text, text_editor, text_input,
 };
 use iced::{Center, Element, Fill, Length, Padding, Subscription, Task};
 
@@ -145,6 +146,22 @@ struct Session {
     generation: u64,
     queries: query::Queries,
     status: Option<Notice>,
+    /// The text in the row filter box.
+    row_filter: String,
+    /// The filter that the current page uses.
+    applied_filter: Option<String>,
+    /// For each grid, its scroll position and visible height.
+    scrolled: std::collections::HashMap<&'static str, (f32, f32)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Move {
+    Up,
+    Down,
+    PageUp,
+    PageDown,
+    First,
+    Last,
 }
 
 /// The columns of a table, and the Structure tab rows, made once at load.
@@ -298,7 +315,16 @@ enum Message {
     /// The saved file and its row count, or nothing if the user closed the dialog.
     Exported(Result<Option<(String, usize)>, String>),
     CopyRow,
-    GridScrolled(&'static str, f32),
+    GridScrolled(grid::Scrolled),
+    /// Moves the row selection with the keyboard.
+    MoveSelection(Move),
+    RowFilter(String),
+    ApplyFilter,
+    ClearFilter,
+    /// Runs the statements that the safety check stopped.
+    RunAnyway,
+    DismissRisks,
+    FormReadOnly(bool),
     Key(keyboard::Event),
     SetAppearance(Appearance),
     Window(chrome::Action),
@@ -403,6 +429,7 @@ impl App {
             Message::FormTls(v) => self.form.tls = v,
             Message::FormCaFile(v) => self.form.ca_file = v,
             Message::FormTimeout(v) => self.form.timeout = v,
+            Message::FormReadOnly(v) => self.form.read_only = v,
             Message::FormPath(v) => self.form.path = v,
             Message::BrowseDatabase => {
                 return pick_file(FileField::Database, &self.form.path);
@@ -494,11 +521,16 @@ impl App {
             }
             Message::Window(action) => return chrome::perform(action),
             Message::SystemTheme(mode) => self.system_dark = mode == iced::theme::Mode::Dark,
-            Message::GridScrolled(head, x) => {
+            Message::GridScrolled(scrolled) => {
+                if let Some(session) = &mut self.session {
+                    session
+                        .scrolled
+                        .insert(scrolled.body, (scrolled.y, scrolled.height));
+                }
                 return operation::scroll_to(
-                    head,
+                    scrolled.head,
                     operation::AbsoluteOffset {
-                        x: Some(x),
+                        x: Some(scrolled.x),
                         y: None,
                     },
                 );
@@ -722,6 +754,21 @@ impl App {
                 ),
         };
 
+        let fields = fields.push(
+            column![
+                checkbox(f.read_only)
+                    .label("Read-only")
+                    .on_toggle(Message::FormReadOnly)
+                    .font(theme::BODY_MEDIUM)
+                    .text_size(theme::TEXT_SM)
+                    .size(16)
+                    .spacing(8)
+                    .style(theme::check_box),
+                muted("The database refuses all changes on this connection."),
+            ]
+            .spacing(4),
+        );
+
         let note: Element<_> = match &self.notice {
             Some(Notice::Error(e)) => error_note(e),
             Some(Notice::Ok(m)) => text(m.as_str())
@@ -809,6 +856,9 @@ impl Session {
             generation: 0,
             queries: query::Queries::new(history),
             status: None,
+            row_filter: String::new(),
+            applied_filter: None,
+            scrolled: std::collections::HashMap::new(),
         }
     }
 
@@ -821,6 +871,8 @@ impl Session {
         self.current = Some(table);
         self.offset = 0;
         self.sort = None;
+        self.row_filter.clear();
+        self.applied_filter = None;
         self.selected = None;
         self.inspector = None;
         if self.tab == Tab::Query {
@@ -867,7 +919,8 @@ impl Session {
         self.inspector = None;
         let db = self.db.clone();
         let offset = self.offset;
-        Task::perform(db::page(db, table, order, offset, PAGE), move |r| {
+        let filter = self.applied_filter.clone();
+        Task::perform(db::page(db, table, filter, order, offset, PAGE), move |r| {
             Message::PageLoaded(generation, r)
         })
         .chain(operation::snap_to(
@@ -881,7 +934,7 @@ impl Session {
             .columns
             .ready()
             .is_some_and(|c| c.iter().any(|c| c.primary_key));
-        has_key && self.current.as_ref().is_some_and(|t| !t.is_view)
+        has_key && !self.config.read_only && self.current.as_ref().is_some_and(|t| !t.is_view)
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -1069,7 +1122,29 @@ impl Session {
                     }
                 }
             },
-            Message::Edit(action) => self.queries.active_mut().editor.perform(action),
+            Message::Edit(action) => {
+                let tab = self.queries.active_mut();
+                if action.is_edit() {
+                    tab.risks = None;
+                }
+                tab.editor.perform(action);
+            }
+            Message::RunAnyway => return self.run_checked(true),
+            Message::DismissRisks => self.queries.active_mut().risks = None,
+            Message::RowFilter(text) => self.row_filter = text,
+            Message::ApplyFilter => {
+                let filter = self.row_filter.trim();
+                self.applied_filter = (!filter.is_empty()).then(|| filter.to_string());
+                self.offset = 0;
+                return self.load_page();
+            }
+            Message::ClearFilter => {
+                self.row_filter.clear();
+                self.applied_filter = None;
+                self.offset = 0;
+                return self.load_page();
+            }
+            Message::MoveSelection(step) => return self.move_selection(step),
             #[cfg(feature = "shot")]
             Message::SetSql(sql) => self.queries.active_mut().set_sql(sql),
             Message::Run => return self.run(),
@@ -1259,11 +1334,28 @@ impl Session {
     }
 
     fn run(&mut self) -> Task<Message> {
+        self.run_checked(false)
+    }
+
+    /// Runs the SQL of the active tab. Unless `confirmed`, a statement that
+    /// changes or removes every row waits for the user to confirm it.
+    fn run_checked(&mut self, confirmed: bool) -> Task<Message> {
+        let read_only = self.config.read_only;
         let tab = self.queries.active_mut();
         let sql = tab.sql_to_run();
         if sql.trim().is_empty() || tab.running() {
             return Task::none();
         }
+        // On a read-only connection the database refuses the change anyway.
+        if !confirmed && !read_only {
+            let risks = guard::risks(&sql);
+            if !risks.is_empty() {
+                tab.risks = Some(risks);
+                self.tab = Tab::Query;
+                return Task::none();
+            }
+        }
+        tab.risks = None;
         tab.run += 1;
         tab.sql = sql.clone();
         tab.started = Some(std::time::Instant::now());
@@ -1278,6 +1370,84 @@ impl Session {
         )
     }
 
+    /// Moves the selected row in the Data or Query grid, and scrolls it into view.
+    fn move_selection(&mut self, step: Move) -> Task<Message> {
+        let (rows, current, body) = match self.tab {
+            Tab::Data => match self.page.ready() {
+                Some(page) => (page.result.rows.len(), self.selected, DATA_GRID.0),
+                None => return Task::none(),
+            },
+            Tab::Query => match &self.queries.active().result {
+                Load::Ready(rs) => (rs.rows.len(), self.queries.active().selected, QUERY_GRID.0),
+                _ => return Task::none(),
+            },
+            Tab::Structure => return Task::none(),
+        };
+        if rows == 0 {
+            return Task::none();
+        }
+        if self
+            .inspector
+            .as_ref()
+            .is_some_and(|ins| ins.fields.iter().any(Field::changed))
+            && self.tab == Tab::Data
+        {
+            self.status = Some(Notice::Error(
+                "Save or discard the changes to this row first.".into(),
+            ));
+            return Task::none();
+        }
+        const PAGE_STEP: usize = 15;
+        let last = rows - 1;
+        let next = match (current, step) {
+            (_, Move::Last) => last,
+            (None, _) | (_, Move::First) => 0,
+            (Some(r), Move::Up) => r.saturating_sub(1),
+            (Some(r), Move::Down) => (r + 1).min(last),
+            (Some(r), Move::PageUp) => r.saturating_sub(PAGE_STEP),
+            (Some(r), Move::PageDown) => (r + PAGE_STEP).min(last),
+        };
+        let open = match self.tab {
+            // An open row panel follows the selection.
+            Tab::Data if self.inspector.is_some() => self.update(Message::SelectRow(next)),
+            Tab::Data => {
+                self.selected = Some(next);
+                Task::none()
+            }
+            _ => {
+                self.queries.active_mut().selected = Some(next);
+                Task::none()
+            }
+        };
+        Task::batch([open, self.reveal(body, next)])
+    }
+
+    /// Scrolls a grid so that a row is visible.
+    fn reveal(&mut self, body: &'static str, row: usize) -> Task<Message> {
+        // Until the grid reports its height, assume a common one.
+        let (y, height) = match self.scrolled.get(body) {
+            Some(&(y, h)) if h > 0.0 => (y, h),
+            _ => (0.0, 400.0),
+        };
+        let top = row as f32 * grid::ROW_STEP;
+        let bottom = top + grid::ROW_STEP;
+        let target = if top < y {
+            top
+        } else if bottom > y + height {
+            bottom - height
+        } else {
+            return Task::none();
+        };
+        self.scrolled.insert(body, (target, height));
+        operation::scroll_to(
+            body,
+            operation::AbsoluteOffset {
+                x: None,
+                y: Some(target),
+            },
+        )
+    }
+
     fn on_key(&mut self, key: Key, modifiers: keyboard::Modifiers) -> Task<Message> {
         match key.as_ref() {
             Key::Named(Named::Escape) if self.inspector.is_some() => {
@@ -1285,6 +1455,30 @@ impl Session {
             }
             Key::Named(Named::Escape) if self.queries.active().running() => {
                 self.update(Message::Cancel)
+            }
+            Key::Named(Named::Escape) if self.queries.active().risks.is_some() => {
+                self.update(Message::DismissRisks)
+            }
+            Key::Named(named) if !modifiers.command() && !modifiers.alt() => {
+                let step = match named {
+                    Named::ArrowUp => Some(Move::Up),
+                    Named::ArrowDown => Some(Move::Down),
+                    Named::PageUp => Some(Move::PageUp),
+                    Named::PageDown => Some(Move::PageDown),
+                    Named::Home => Some(Move::First),
+                    Named::End => Some(Move::Last),
+                    _ => None,
+                };
+                match (step, named) {
+                    (Some(step), _) => self.update(Message::MoveSelection(step)),
+                    (None, Named::Enter) if self.tab == Tab::Data && self.inspector.is_none() => {
+                        match self.selected {
+                            Some(r) => self.update(Message::SelectRow(r)),
+                            None => Task::none(),
+                        }
+                    }
+                    _ => Task::none(),
+                }
             }
             Key::Named(Named::Enter) if modifiers.command() && self.tab == Tab::Query => self.run(),
             Key::Character("t") if modifiers.command() => self.update(Message::NewQuery),
@@ -1329,6 +1523,14 @@ impl Session {
                 })
                 .size(theme::TEXT_XS)
                 .style(theme::text_muted)
+                .wrapping(text::Wrapping::None),
+                text(if self.config.read_only {
+                    "Read-only"
+                } else {
+                    ""
+                })
+                .size(theme::TEXT_XS)
+                .style(theme::text_accent)
                 .wrapping(text::Wrapping::None),
             ]
             .spacing(12)
@@ -1526,7 +1728,7 @@ impl Session {
                 thousands(page.total)
             )
         };
-        let can_add = self.current.as_ref().is_some_and(|t| !t.is_view);
+        let can_add = !self.config.read_only && self.current.as_ref().is_some_and(|t| !t.is_view);
         let short = density != Density::Full;
         let mut tools = row![].spacing(8).align_y(Center);
         // The status bar also shows the row count, so hide it here first.
@@ -1562,12 +1764,23 @@ impl Session {
         let Some(table) = &self.current else {
             return empty_state("Choose a table on the left to see its rows.", None);
         };
-        match &self.page {
+        let rows = match &self.page {
             Load::Idle | Load::Loading => grid::skeleton(),
             Load::Failed(e) => empty_state_error(e),
+            Load::Ready(page) if page.result.rows.is_empty() && self.applied_filter.is_some() => {
+                empty_state(
+                    "No rows match the filter.",
+                    Some(small_key(
+                        "Clear filter",
+                        theme::key,
+                        Some(Message::ClearFilter),
+                    )),
+                )
+            }
             Load::Ready(page) if page.result.rows.is_empty() && self.offset == 0 => empty_state(
                 format!("{} has no rows yet.", table.name),
-                (!table.is_view).then(|| small_key("Add row", theme::key, Some(Message::AddRow))),
+                (!table.is_view && !self.config.read_only)
+                    .then(|| small_key("Add row", theme::key, Some(Message::AddRow))),
             ),
             Load::Ready(page) => grid::view(grid::Grid {
                 result: &page.result,
@@ -1578,7 +1791,29 @@ impl Session {
                 ids: DATA_GRID,
                 on_scroll: Message::GridScrolled,
             }),
+        };
+
+        // The filter box, with a key to clear the filter while one is used.
+        let filter = text_input("Filter rows, for example status = 'paid'", &self.row_filter)
+            .on_input(Message::RowFilter)
+            .on_submit(Message::ApplyFilter)
+            .font(theme::MONO)
+            .size(theme::TEXT_SM)
+            .padding(Padding::from([6.0, 10.0]))
+            .style(theme::field)
+            .width(Fill);
+        let mut bar = row![filter].spacing(8).align_y(Center);
+        if self.applied_filter.is_some() {
+            bar = bar.push(small_key("Clear", theme::key, Some(Message::ClearFilter)));
+        } else {
+            bar = bar.push(small_key("Filter", theme::key, Some(Message::ApplyFilter)));
         }
+        column![
+            container(bar).padding(Padding::from([8.0, 12.0])),
+            hrule(),
+            rows
+        ]
+        .into()
     }
 
     fn structure_view(&self) -> Element<'_, Message> {
@@ -1689,9 +1924,12 @@ impl Session {
         let changed = ins.fields.iter().any(Field::changed);
         let mut confirm = None;
         let footer: Element<_> = if !editable {
-            muted(match self.current.as_ref().is_some_and(|t| t.is_view) {
-                true => "Views are read-only here.",
-                false => "This table has no primary key, so its rows are read-only here.",
+            muted(if self.config.read_only {
+                "This connection is read-only."
+            } else if self.current.as_ref().is_some_and(|t| t.is_view) {
+                "Views are read-only here."
+            } else {
+                "This table has no primary key, so its rows are read-only here."
             })
         } else {
             let mut actions = row![
@@ -2251,6 +2489,18 @@ fn script() -> Task<Message> {
                 Kind::Postgres
             })),
             "connect" => Some(Message::Connect),
+            "move" => Some(Message::MoveSelection(match arg {
+                "up" => Move::Up,
+                "pageup" => Move::PageUp,
+                "pagedown" => Move::PageDown,
+                "first" => Move::First,
+                "last" => Move::Last,
+                _ => Move::Down,
+            })),
+            "filter" => Some(Message::RowFilter(arg.to_string())),
+            "applyfilter" => Some(Message::ApplyFilter),
+            "anyway" => Some(Message::RunAnyway),
+            "readonly" => Some(Message::FormReadOnly(arg != "off")),
             "mode" => Some(Message::SetAppearance(match arg {
                 "dark" => Appearance::Dark,
                 "light" => Appearance::Light,

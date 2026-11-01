@@ -5,7 +5,7 @@
 
 use iced::border::{self, Radius};
 use iced::font::{Family, Weight};
-use iced::widget::{button, container, scrollable, svg, text, text_editor, text_input};
+use iced::widget::{button, checkbox, container, scrollable, svg, text, text_editor, text_input};
 use iced::{Background, Border, Color, Font, Shadow, Theme, Vector};
 
 const fn rgb(r: u8, g: u8, b: u8) -> Color {
@@ -666,6 +666,39 @@ pub fn query_tab_icon(active: bool) -> impl Fn(&Theme, svg::Status) -> svg::Styl
 }
 
 // ---------- inputs ----------
+
+pub fn check_box(theme: &Theme, status: checkbox::Status) -> checkbox::Style {
+    let c = colors(theme);
+    let (checked, hovered, disabled) = match status {
+        checkbox::Status::Active { is_checked } => (is_checked, false, false),
+        checkbox::Status::Hovered { is_checked } => (is_checked, true, false),
+        checkbox::Status::Disabled { is_checked } => (is_checked, false, true),
+    };
+    let style = checkbox::Style {
+        background: Background::Color(if checked { c.accent } else { c.key_face }),
+        icon_color: c.accent_ink,
+        border: hair(
+            if checked {
+                c.accent_edge
+            } else if hovered {
+                c.key_edge
+            } else {
+                c.rule2
+            },
+            4.0,
+        ),
+        text_color: Some(c.ink),
+    };
+    if disabled {
+        checkbox::Style {
+            background: Background::Color(faded(c.key_face)),
+            text_color: Some(faded(c.ink)),
+            ..style
+        }
+    } else {
+        style
+    }
+}
 
 /// Text fields. The border is 1 px and turns the accent color on focus.
 pub fn field(theme: &Theme, status: text_input::Status) -> text_input::Style {

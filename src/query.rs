@@ -31,6 +31,8 @@ pub struct QueryTab {
     pub started: Option<Instant>,
     /// True after the user asks to stop the current run.
     pub cancelling: bool,
+    /// The reasons that the last run waits for the user to confirm it.
+    pub risks: Option<Vec<String>>,
 }
 
 impl QueryTab {
@@ -44,6 +46,7 @@ impl QueryTab {
             sql: String::new(),
             started: None,
             cancelling: false,
+            risks: None,
         }
     }
 
@@ -253,40 +256,44 @@ impl Queries {
             })
             .style(theme::sql_editor);
 
-        let results: Element<_> = match &tab.result {
-            Load::Idle => empty_state(
-                format!(
-                    "Results show here. Write SQL above and press {RUN_KEY}+Enter. \
+        let results: Element<_> = if let Some(risks) = &tab.risks {
+            confirm(risks)
+        } else {
+            match &tab.result {
+                Load::Idle => empty_state(
+                    format!(
+                        "Results show here. Write SQL above and press {RUN_KEY}+Enter. \
                      If you select text, only that text runs."
+                    ),
+                    None,
                 ),
-                None,
-            ),
-            Load::Loading => grid::skeleton(),
-            Load::Failed(e) => container(error_note(e)).padding(16).width(Fill).into(),
-            Load::Ready(rs) if rs.columns.is_empty() => {
-                let mut note = column![
-                    text(match rs.affected {
-                        Some(n) => format!("{} affected", count(n, "row")),
-                        None => "The statement ran.".to_string(),
-                    })
-                    .font(theme::DISPLAY)
-                    .size(theme::TEXT_LG)
-                ]
-                .spacing(4);
-                if rs.affected == Some(0) {
-                    note = note.push(muted("Nothing matched the statement's conditions."));
+                Load::Loading => grid::skeleton(),
+                Load::Failed(e) => container(error_note(e)).padding(16).width(Fill).into(),
+                Load::Ready(rs) if rs.columns.is_empty() => {
+                    let mut note = column![
+                        text(match rs.affected {
+                            Some(n) => format!("{} affected", count(n, "row")),
+                            None => "The statement ran.".to_string(),
+                        })
+                        .font(theme::DISPLAY)
+                        .size(theme::TEXT_LG)
+                    ]
+                    .spacing(4);
+                    if rs.affected == Some(0) {
+                        note = note.push(muted("Nothing matched the statement's conditions."));
+                    }
+                    container(note).padding(16).width(Fill).into()
                 }
-                container(note).padding(16).width(Fill).into()
+                Load::Ready(rs) => grid::view(grid::Grid {
+                    result: rs,
+                    selected: tab.selected,
+                    on_select: Some(Message::SelectQueryRow),
+                    on_sort: None,
+                    sort: None,
+                    ids: QUERY_GRID,
+                    on_scroll: Message::GridScrolled,
+                }),
             }
-            Load::Ready(rs) => grid::view(grid::Grid {
-                result: rs,
-                selected: tab.selected,
-                on_select: Some(Message::SelectQueryRow),
-                on_sort: None,
-                sort: None,
-                ids: QUERY_GRID,
-                on_scroll: Message::GridScrolled,
-            }),
         };
 
         let work = column![
@@ -447,6 +454,44 @@ impl Queries {
             .style(theme::bar)
             .into()
     }
+}
+
+/// Asks the user to confirm statements that change or remove every row.
+fn confirm(risks: &[String]) -> Element<'_, Message> {
+    let reasons = Column::with_children(risks.iter().map(|risk| {
+        text(risk.as_str())
+            .size(theme::TEXT_SM)
+            .wrapping(text::Wrapping::WordOrGlyph)
+            .into()
+    }))
+    .spacing(4);
+    container(
+        container(
+            column![
+                text("Run this query?")
+                    .font(theme::DISPLAY)
+                    .size(theme::TEXT_LG),
+                reasons,
+                row![
+                    space::horizontal(),
+                    small_key("Cancel", theme::key, Some(Message::DismissRisks)),
+                    small_key(
+                        "Run anyway",
+                        theme::key_danger_armed,
+                        Some(Message::RunAnyway)
+                    ),
+                ]
+                .spacing(8),
+            ]
+            .spacing(12),
+        )
+        .padding(16)
+        .width(Fill)
+        .style(theme::error_note),
+    )
+    .padding(16)
+    .width(Fill)
+    .into()
 }
 
 /// A key that shows whether its panel is open.

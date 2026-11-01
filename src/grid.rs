@@ -18,6 +18,22 @@ const MAX_CHARS: usize = 160;
 /// The width of the scrollbar, with its margins.
 const BAR: f32 = 10.0;
 
+/// Where the rows of a grid are scrolled to.
+#[derive(Debug, Clone, Copy)]
+pub struct Scrolled {
+    /// The widget id of the column heads, which move sideways with the rows.
+    pub head: &'static str,
+    /// The widget id of the rows.
+    pub body: &'static str,
+    pub x: f32,
+    pub y: f32,
+    /// The visible height of the rows.
+    pub height: f32,
+}
+
+/// The height of one row, with its line.
+pub const ROW_STEP: f32 = ROW_H + 1.0;
+
 pub struct Grid<'a, M> {
     pub result: &'a ResultSet,
     pub selected: Option<usize>,
@@ -28,7 +44,7 @@ pub struct Grid<'a, M> {
     /// The widget ids of the rows and of the column heads.
     pub ids: (&'static str, &'static str),
     /// Sends the horizontal scroll position of the rows, so that the heads can move with them.
-    pub on_scroll: fn(&'static str, f32) -> M,
+    pub on_scroll: fn(Scrolled) -> M,
 }
 
 fn widths(rs: &ResultSet) -> Vec<f32> {
@@ -120,8 +136,12 @@ pub fn view<'a, M: Clone + 'a>(grid: Grid<'a, M>) -> Element<'a, M> {
                         // All mono characters have the same width, so a character
                         // count is accurate. One character stays free for "…".
                         let (line, cut) = first_line(v);
-                        let fits =
-                            (((widths[i] - PAD_X * 2.0) / theme::MONO_ADVANCE) as usize).max(2) - 1;
+                        // A small amount is added so that a width of exactly n characters
+                        // is not rounded down to n - 1.
+                        let fits = ((((widths[i] - PAD_X * 2.0) / theme::MONO_ADVANCE) + 0.01)
+                            as usize)
+                            .max(2)
+                            - 1;
                         let shown = if line.chars().count() > fits {
                             let keep: String = line.chars().take(fits - 1).collect();
                             format!("{}…", keep.trim_end())
@@ -174,7 +194,16 @@ pub fn view<'a, M: Clone + 'a>(grid: Grid<'a, M>) -> Element<'a, M> {
                 vertical: bar,
                 horizontal: bar,
             })
-            .on_scroll(move |viewport| on_scroll(head_id, viewport.absolute_offset().x))
+            .on_scroll(move |viewport| {
+                let offset = viewport.absolute_offset();
+                on_scroll(Scrolled {
+                    head: head_id,
+                    body: body_id,
+                    x: offset.x,
+                    y: offset.y,
+                    height: viewport.bounds().height,
+                })
+            })
             .style(theme::scroller)
             .width(Fill)
             .height(Fill);

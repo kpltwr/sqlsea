@@ -97,6 +97,23 @@ pub struct Config {
     /// The database refuses all changes on this connection.
     #[serde(default)]
     pub read_only: bool,
+    /// Connect to PostgreSQL through an SSH tunnel.
+    #[serde(default)]
+    pub ssh: bool,
+    #[serde(default)]
+    pub ssh_host: String,
+    #[serde(default)]
+    pub ssh_port: String,
+    #[serde(default)]
+    pub ssh_user: String,
+    #[serde(default)]
+    pub ssh_auth: crate::tunnel::SshAuth,
+    #[serde(default)]
+    pub ssh_key_file: String,
+    /// The SSH password or key passphrase. Kept in the system keyring, never
+    /// in the configuration file.
+    #[serde(default, skip_serializing)]
+    pub ssh_secret: String,
 }
 
 impl Config {
@@ -121,7 +138,16 @@ impl Config {
                 let port = or(&self.port, "5432");
                 let user = or(&self.user, "postgres");
                 let db = or(&self.database, user);
-                format!("{user}@{host}:{port}/{db}")
+                if self.ssh {
+                    let ssh_user = or(&self.ssh_user, "");
+                    let at = if ssh_user.is_empty() { "" } else { "@" };
+                    format!(
+                        "{user}@{host}:{port}/{db} through SSH to {ssh_user}{at}{}",
+                        self.ssh_host.trim()
+                    )
+                } else {
+                    format!("{user}@{host}:{port}/{db}")
+                }
             }
             Kind::Sqlite => self.path.clone(),
         }
@@ -217,19 +243,28 @@ pub fn literal(value: Option<&str>) -> String {
 pub struct Connected {
     pub db: Db,
     pub encrypted: Option<bool>,
+    /// The SSH tunnel, if the connection uses one. It closes when dropped.
+    pub tunnel: Option<Arc<crate::tunnel::Tunnel>>,
 }
 
 pub async fn connect(config: Config) -> Result<Connected, String> {
+    let known_hosts = crate::tunnel::known_hosts().unwrap_or_default();
+    connect_with(config, &known_hosts).await
+}
+
+/// Like `connect`, with the known_hosts file to check SSH servers against.
+pub async fn connect_with(
+    config: Config,
+    known_hosts: &std::path::Path,
+) -> Result<Connected, String> {
     match config.kind {
         Kind::Postgres => {
             let mut pg = tokio_postgres::Config::new();
             let user = or(&config.user, "postgres").to_string();
+            let port: u16 = or(&config.port, "5432")
+                .parse()
+                .map_err(|_| "The port must be a number.".to_string())?;
             pg.host(or(&config.host, "localhost"))
-                .port(
-                    or(&config.port, "5432")
-                        .parse()
-                        .map_err(|_| "The port must be a number.".to_string())?,
-                )
                 .dbname(or(&config.database, &user))
                 .user(&user)
                 .application_name("sqlsea")
@@ -246,6 +281,36 @@ pub async fn connect(config: Config) -> Result<Connected, String> {
                 // The server then refuses every statement that changes data.
                 pg.options("-c default_transaction_read_only=on");
             }
+            let tunnel = if config.ssh {
+                let ssh_host = config.ssh_host.trim();
+                if ssh_host.is_empty() {
+                    return Err("Type the host of the SSH server.".into());
+                }
+                let tunnel = crate::tunnel::open(
+                    crate::tunnel::Ssh {
+                        host: ssh_host,
+                        port: or(&config.ssh_port, "22")
+                            .parse()
+                            .map_err(|_| "The SSH port must be a number.".to_string())?,
+                        user: or(&config.ssh_user, &whoami_user()),
+                        auth: config.ssh_auth,
+                        key_file: &crate::normalized_path(&config.ssh_key_file),
+                        secret: &config.ssh_secret,
+                        known_hosts,
+                    },
+                    or(&config.host, "localhost").to_string(),
+                    port,
+                )
+                .await?;
+                // TLS checks the database host name, but the traffic goes to the tunnel.
+                // `port` adds a port each time it is called, so it is called once.
+                pg.hostaddr(std::net::Ipv4Addr::LOCALHOST.into())
+                    .port(tunnel.port);
+                Some(Arc::new(tunnel))
+            } else {
+                pg.port(port);
+                None
+            };
 
             // The two connectors make different stream types, so each branch
             // starts its own connection task.
@@ -278,7 +343,11 @@ pub async fn connect(config: Config) -> Result<Connected, String> {
             .ok()
             .and_then(|rs| rs.rows.first().and_then(|r| r[0].clone()))
             .map(|v| v == "true");
-            Ok(Connected { db, encrypted })
+            Ok(Connected {
+                db,
+                encrypted,
+                tunnel,
+            })
         }
         Kind::Sqlite => {
             let path = config.path.trim().to_string();
@@ -309,6 +378,7 @@ pub async fn connect(config: Config) -> Result<Connected, String> {
                         interrupt,
                     })),
                     encrypted: None,
+                    tunnel: None,
                 })
             })
             .await
@@ -694,6 +764,13 @@ fn pg_error(e: tokio_postgres::Error) -> String {
 
 const READ_ONLY: &str =
     "This connection is read-only. To change data, turn off Read-only for the connection.";
+
+/// The name of the user on this computer, the default SSH user.
+fn whoami_user() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_default()
+}
 
 /// Puts a plain sentence before the error text from the driver.
 fn with_hint(plain: Option<&str>, raw: String) -> String {
@@ -1108,5 +1185,119 @@ mod tests {
             .await
             .unwrap_err();
         assert!(refused.contains("does not accept TLS"), "{refused}");
+    }
+
+    /// Needs an SSH server that reaches a PostgreSQL server at the host
+    /// `sqlsea-pgdb`. CONTRIBUTING.md tells how to start them. Run it with:
+    /// `SQLSEA_SSH_PORT=2222 SQLSEA_SSH_DIR=/path/to/keys SSH_AUTH_SOCK=... cargo test -- --ignored ssh`
+    #[tokio::test]
+    #[ignore]
+    async fn ssh_tunnel() {
+        use crate::tunnel::SshAuth;
+        let dir =
+            std::path::PathBuf::from(std::env::var("SQLSEA_SSH_DIR").expect("SQLSEA_SSH_DIR"));
+        let ssh_port = std::env::var("SQLSEA_SSH_PORT").expect("SQLSEA_SSH_PORT");
+        let known = dir.join("known_hosts");
+        let config = |auth: SshAuth, key: &str, secret: &str| Config {
+            kind: Kind::Postgres,
+            host: "sqlsea-pgdb".into(),
+            user: "postgres".into(),
+            password: "sqlsea".into(),
+            tls: Tls::Off,
+            ssh: true,
+            ssh_host: "127.0.0.1".into(),
+            ssh_port: ssh_port.clone(),
+            ssh_user: "tunnel".into(),
+            ssh_auth: auth,
+            ssh_key_file: dir.join(key).display().to_string(),
+            ssh_secret: secret.into(),
+            ..Default::default()
+        };
+        let works = |c: Config, known: std::path::PathBuf| async move {
+            let connected = connect_with(c, &known).await?;
+            let rs = execute(connected.db.clone(), "select 'through ssh'".into()).await?;
+            assert_eq!(rs.rows[0][0].as_deref(), Some("through ssh"));
+            Ok::<_, String>(connected)
+        };
+
+        // Each way to sign in.
+        works(config(SshAuth::KeyFile, "id", ""), known.clone())
+            .await
+            .unwrap();
+        works(
+            config(SshAuth::KeyFile, "id_pass", "open sesame"),
+            known.clone(),
+        )
+        .await
+        .unwrap();
+        works(config(SshAuth::Password, "", "tunnel-pw"), known.clone())
+            .await
+            .unwrap();
+        if std::env::var("SSH_AUTH_SOCK").is_ok() {
+            works(config(SshAuth::Agent, "", ""), known.clone())
+                .await
+                .unwrap();
+        }
+
+        // Wrong secrets.
+        let e = works(config(SshAuth::Password, "", "nope"), known.clone())
+            .await
+            .unwrap_err();
+        assert!(e.contains("did not accept the sign-in"), "{e}");
+        let e = works(config(SshAuth::KeyFile, "id_pass", "nope"), known.clone())
+            .await
+            .unwrap_err();
+        assert!(e.contains("passphrase"), "{e}");
+
+        // Host keys that are not known, or that changed.
+        let empty = dir.join("known_hosts_empty");
+        std::fs::write(&empty, "").unwrap();
+        let e = works(config(SshAuth::KeyFile, "id", ""), empty)
+            .await
+            .unwrap_err();
+        assert!(e.contains("not in your known_hosts"), "{e}");
+        let other = std::fs::read_to_string(dir.join("id.pub")).unwrap();
+        let key = other
+            .split_whitespace()
+            .take(2)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let changed = dir.join("known_hosts_changed");
+        std::fs::write(&changed, format!("[127.0.0.1]:{ssh_port} {key}\n")).unwrap();
+        let e = works(config(SshAuth::KeyFile, "id", ""), changed)
+            .await
+            .unwrap_err();
+        assert!(e.contains("is different from line 1"), "{e}");
+
+        // A cancel goes through the tunnel too.
+        let c = config(SshAuth::KeyFile, "id", "");
+        let connected = works(c.clone(), known.clone()).await.unwrap();
+        let running = tokio::spawn(execute(connected.db.clone(), "select pg_sleep(30)".into()));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        cancel(connected.db.clone(), c).await.unwrap();
+        let e = running.await.unwrap().unwrap_err();
+        assert!(is_cancelled(&e), "{e}");
+
+        // Verified TLS through the tunnel checks the database host name, not 127.0.0.1.
+        if let Ok(ca) = std::env::var("SQLSEA_SSH_TLS_CA") {
+            let tls = Config {
+                host: "sqlsea-pgtls".into(),
+                tls: Tls::Verify,
+                ca_file: ca,
+                ..config(SshAuth::KeyFile, "id", "")
+            };
+            let connected = works(tls, known.clone()).await.unwrap();
+            assert_eq!(connected.encrypted, Some(true));
+        }
+
+        // The tunnel closes with the connection.
+        let port = connected.tunnel.as_ref().unwrap().port;
+        drop(connected);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(
+            tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .is_err()
+        );
     }
 }

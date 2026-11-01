@@ -88,6 +88,12 @@ pub fn load() -> (Vec<Config>, Option<String>) {
                 Err(e) => problem = Some(e),
             }
         }
+        if config.ssh {
+            match get_password(&ssh_key(&config.id)) {
+                Ok(secret) => config.ssh_secret = secret,
+                Err(e) => problem = Some(e),
+            }
+        }
     }
     // The rewrite removes plain-text passwords from the file. Do it only after
     // all of them are in the keyring.
@@ -151,6 +157,11 @@ pub fn set_password(id: &str, password: &str) -> Result<(), String> {
         return delete_password(id);
     }
     entry(id)?.set_password(password).map_err(|e| e.to_string())
+}
+
+/// The keyring key for the SSH password or passphrase of a connection.
+pub fn ssh_key(id: &str) -> String {
+    format!("{id}.ssh")
 }
 
 pub fn delete_password(id: &str) -> Result<(), String> {

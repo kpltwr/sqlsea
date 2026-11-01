@@ -104,6 +104,16 @@ PostgreSQL connections can use TLS. Choose one of these modes under Encryption:
 
 Verified trusts the certificate authorities that your system trusts. Some providers, for example Amazon RDS, use their own authority. For these providers, download their CA file and choose it as the CA certificate file. After you connect, the top bar tells you if the connection is encrypted.
 
+## SSH tunnels
+
+If the database is behind a server, sqlsea can connect through an SSH tunnel. Select Connect through an SSH tunnel and type the SSH host, port and user. In Host and Port above, type the database host and port as the SSH server sees them. For example, use `localhost` if the database runs on the SSH server.
+
+sqlsea can sign in with the keys in your SSH agent, with a private key file, or with a password. It keeps the password or the key passphrase in the keyring. The SSH agent works on Linux and macOS.
+
+The SSH server must be in your `~/.ssh/known_hosts` file. If it is not, connect to it once with the `ssh` command and make sure that its key is correct. sqlsea refuses a server with an unknown key or a changed key.
+
+TLS works through the tunnel. Verified checks the certificate against the database host name.
+
 ## Brand
 
 The logos, icons, colors and fonts are in [`brand/`](brand/BRAND.md). To make the files again, run `cargo run --example brand`.

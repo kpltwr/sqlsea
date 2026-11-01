@@ -32,6 +32,18 @@ SQLSEA_TLS_PORT=55433 SQLSEA_TLS_CA=path/to/ca.crt SQLSEA_PLAIN_PORT=55432 \
   cargo test -- --include-ignored
 ```
 
+The SSH test needs an SSH server that can reach a PostgreSQL server with the host name `sqlsea-pgdb`. To run it, follow these steps:
+
+1. Put a private key `id` without a passphrase and a private key `id_pass` with the passphrase `open sesame` in a folder.
+2. Start PostgreSQL in a Docker network with the name `sqlsea-pgdb` and the password `sqlsea`.
+3. Start an SSH server in the same network. It must accept both keys and the password `tunnel-pw` for the user `tunnel`, and allow TCP forwarding.
+4. Write the host key of the SSH server to `known_hosts` in the key folder with `ssh-keyscan`.
+5. Run this command with your port and folder. If `SSH_AUTH_SOCK` is set, the test also uses the SSH agent.
+
+```sh
+SQLSEA_SSH_PORT=2222 SQLSEA_SSH_DIR=path/to/keys cargo test -- --ignored ssh_tunnel
+```
+
 ## Where the code is
 
 | Path | What it holds |
@@ -45,6 +57,7 @@ SQLSEA_TLS_PORT=55433 SQLSEA_TLS_CA=path/to/ca.crt SQLSEA_PLAIN_PORT=55432 \
 | `src/fit.rs` | One line of text that ends in "…" if it does not fit |
 | `src/export.rs` | CSV, JSON and clipboard output |
 | `src/sql.rs` | SQL highlighting |
+| `src/tunnel.rs` | SSH tunnels for PostgreSQL |
 | `src/dsn.rs` | Reads connection URLs and libpq connection strings |
 | `src/guard.rs` | Splits SQL into statements, and finds statements that change all rows |
 | `src/chrome.rs` | The title bar controls and resize edges on Linux |

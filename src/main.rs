@@ -13,6 +13,7 @@ mod sql;
 mod store;
 mod theme;
 mod tls;
+mod tunnel;
 
 use iced::keyboard::{self, Key, key::Named};
 use iced::widget::{
@@ -131,6 +132,8 @@ struct App {
 }
 
 struct Session {
+    /// Keeps the SSH tunnel open while the session is open.
+    _tunnel: Option<std::sync::Arc<tunnel::Tunnel>>,
     /// True if the PostgreSQL connection is encrypted. `None` for SQLite.
     encrypted: Option<bool>,
     config: Config,
@@ -273,7 +276,7 @@ enum Message {
     Test,
     Tested(Result<Option<bool>, String>),
     Connect,
-    Connected(Config, Result<db::Connected, String>),
+    Connected(Box<Config>, Result<db::Connected, String>),
     DeleteSaved,
     // Session
     Disconnect,
@@ -334,6 +337,14 @@ enum Message {
     DismissRisks,
     FormReadOnly(bool),
     FormUrl(String),
+    FormSsh(bool),
+    FormSshHost(String),
+    FormSshPort(String),
+    FormSshUser(String),
+    FormSshAuth(tunnel::SshAuth),
+    FormSshKeyFile(String),
+    FormSshSecret(String),
+    BrowseSshKey,
     ApplyUrl,
     ColumnIndex(Result<ColumnIndex, String>),
     Key(keyboard::Event),
@@ -342,6 +353,8 @@ enum Message {
     SystemTheme(iced::theme::Mode),
     #[cfg(feature = "shot")]
     Shoot(String),
+    #[cfg(feature = "shot")]
+    ScrollFormEnd,
 }
 
 impl App {
@@ -428,6 +441,21 @@ impl App {
                 self.url.clear();
             }
             Message::FormUrl(v) => self.url = v,
+            Message::FormSsh(v) => self.form.ssh = v,
+            Message::FormSshHost(v) => self.form.ssh_host = v,
+            Message::FormSshPort(v) => self.form.ssh_port = v,
+            Message::FormSshUser(v) => self.form.ssh_user = v,
+            Message::FormSshAuth(v) => self.form.ssh_auth = v,
+            Message::FormSshKeyFile(v) => self.form.ssh_key_file = v,
+            Message::FormSshSecret(v) => self.form.ssh_secret = v,
+            Message::BrowseSshKey => {
+                let current = if self.form.ssh_key_file.trim().is_empty() {
+                    "~/.ssh/id_ed25519"
+                } else {
+                    &self.form.ssh_key_file
+                };
+                return pick_file(FileField::SshKey, current);
+            }
             Message::ApplyUrl => {
                 let mut form = self.form.clone();
                 match dsn::apply(&self.url, &mut form) {
@@ -471,6 +499,7 @@ impl App {
                     self.form.path = path;
                 }
                 FileField::CaFile => self.form.ca_file = path,
+                FileField::SshKey => self.form.ssh_key_file = path,
             },
             Message::FilePicked(_, None) => {}
             Message::Test => {
@@ -513,6 +542,7 @@ impl App {
                 return connect(config);
             }
             Message::Connected(config, result) => {
+                let config = *config;
                 self.busy = false;
                 match result {
                     Ok(connected) => {
@@ -532,6 +562,7 @@ impl App {
                     self.form = Config::default();
                     self.notice = store::save(&self.saved)
                         .and_then(|()| store::delete_password(&gone.id))
+                        .and_then(|()| store::delete_password(&store::ssh_key(&gone.id)))
                         .err()
                         .map(Notice::Error);
                 }
@@ -564,6 +595,10 @@ impl App {
                 );
             }
             #[cfg(feature = "shot")]
+            Message::ScrollFormEnd => {
+                return operation::snap_to("connect-form", operation::RelativeOffset::END);
+            }
+            #[cfg(feature = "shot")]
             Message::Shoot(path) => {
                 return iced::window::latest()
                     .and_then(iced::window::screenshot)
@@ -594,13 +629,21 @@ impl App {
             .filter(|c| c.name == config.name && c.id != config.id)
         {
             let _ = store::delete_password(&old.id);
+            let _ = store::delete_password(&store::ssh_key(&old.id));
         }
         self.saved.retain(|c| c.name != config.name);
         self.saved.insert(0, config.clone());
         self.editing = Some(0);
         if let Err(e) = store::save(&self.saved) {
             self.notice = Some(Notice::Error(format!("The connection was not saved: {e}")));
-        } else if let Err(e) = store::set_password(&config.id, &config.password) {
+        } else if let Err(e) = store::set_password(&config.id, &config.password).and_then(|()| {
+            let ssh_secret = if config.ssh {
+                config.ssh_secret.as_str()
+            } else {
+                ""
+            };
+            store::set_password(&store::ssh_key(&config.id), ssh_secret)
+        }) {
             self.notice = Some(Notice::Error(format!(
                 "Connected. The password was not saved, because the system keyring \
                  did not accept it.\n{e}"
@@ -807,6 +850,11 @@ impl App {
                 ),
         };
 
+        let fields = if f.kind == Kind::Postgres {
+            fields.push(ssh_fields(f))
+        } else {
+            fields
+        };
         let fields = fields.push(
             column![
                 checkbox(f.read_only)
@@ -870,7 +918,10 @@ impl App {
         .width(Fill)
         .style(theme::panel);
         // If the window is short, the form scrolls.
-        let form = scrollable(form).style(theme::scroller).width(Fill);
+        let form = scrollable(form)
+            .id("connect-form")
+            .style(theme::scroller)
+            .width(Fill);
 
         // The list gets two parts of the width and the form gets three, up to a limit.
         let columns = row![
@@ -893,6 +944,7 @@ impl Session {
     fn new(config: Config, connected: db::Connected) -> Self {
         let history = store::load_history(&config.id);
         Session {
+            _tunnel: connected.tunnel,
             config,
             db: connected.db,
             encrypted: connected.encrypted,
@@ -2150,7 +2202,7 @@ impl Session {
 
 fn connect(config: Config) -> Task<Message> {
     Task::perform(db::connect(config.clone()), move |r| {
-        Message::Connected(config.clone(), r)
+        Message::Connected(Box::new(config.clone()), r)
     })
 }
 
@@ -2377,6 +2429,109 @@ fn input<'a>(
         .style(theme::field)
 }
 
+/// The SSH tunnel part of the PostgreSQL form.
+fn ssh_fields(f: &Config) -> Element<'_, Message> {
+    let toggle = column![
+        checkbox(f.ssh)
+            .label("Connect through an SSH tunnel")
+            .on_toggle(Message::FormSsh)
+            .font(theme::BODY_MEDIUM)
+            .text_size(theme::TEXT_SM)
+            .size(16)
+            .spacing(8)
+            .style(theme::check_box),
+        muted(
+            "Reach a database behind a server. Host and Port above are as the SSH server sees them."
+        ),
+    ]
+    .spacing(4);
+    if !f.ssh {
+        return toggle.into();
+    }
+    let auth = container(
+        Row::with_children(tunnel::SshAuth::ALL.map(|mode| {
+            button(
+                text(mode.label())
+                    .font(theme::BODY_MEDIUM)
+                    .size(theme::TEXT_SM),
+            )
+            .padding(Padding::from([6.0, 12.0]))
+            .style(theme::tray_key(mode == f.ssh_auth))
+            .on_press(Message::FormSshAuth(mode))
+            .into()
+        }))
+        .spacing(2),
+    )
+    .padding(3)
+    .style(theme::tray);
+    let credentials: Element<_> = match f.ssh_auth {
+        tunnel::SshAuth::Agent => muted("Uses the keys in your running SSH agent."),
+        tunnel::SshAuth::KeyFile => column![
+            labelled(
+                "Private key file",
+                with_browse(
+                    input(
+                        "~/.ssh/id_ed25519",
+                        &f.ssh_key_file,
+                        Message::FormSshKeyFile
+                    )
+                    .font(theme::MONO),
+                    Message::BrowseSshKey,
+                ),
+            ),
+            labelled(
+                "Key passphrase",
+                input(
+                    "Only if the key has one",
+                    &f.ssh_secret,
+                    Message::FormSshSecret
+                )
+                .secure(true),
+            ),
+        ]
+        .spacing(14)
+        .into(),
+        tunnel::SshAuth::Password => labelled(
+            "SSH password",
+            input(
+                "Kept in your keyring",
+                &f.ssh_secret,
+                Message::FormSshSecret,
+            )
+            .secure(true),
+        ),
+    };
+    let me = std::env::var("USER").unwrap_or_default();
+    column![
+        toggle,
+        row![
+            labelled(
+                "SSH host",
+                input("bastion.example.com", &f.ssh_host, Message::FormSshHost)
+            ),
+            container(labelled(
+                "SSH port",
+                input("22", &f.ssh_port, Message::FormSshPort)
+            ))
+            .width(110),
+        ]
+        .spacing(12),
+        labelled(
+            "SSH user",
+            text_input(&me, &f.ssh_user)
+                .on_input(Message::FormSshUser)
+                .on_submit(Message::Connect)
+                .padding(Padding::from([7.0, 10.0]))
+                .size(theme::TEXT_MD)
+                .style(theme::field),
+        ),
+        labelled("Sign in with", auth),
+        credentials,
+    ]
+    .spacing(14)
+    .into()
+}
+
 /// A path field with a Browse key that opens the system file dialog.
 fn with_browse<'a>(
     field: text_input::TextInput<'a, Message>,
@@ -2395,6 +2550,7 @@ fn with_browse<'a>(
 enum FileField {
     Database,
     CaFile,
+    SshKey,
 }
 
 /// Opens the system file dialog in the folder of the current path, if any.
@@ -2406,6 +2562,8 @@ fn pick_file(field: FileField, current: &str) -> Task<Message> {
         FileField::CaFile => dialog
             .set_title("Choose a CA certificate")
             .add_filter("Certificates", &["pem", "crt", "cer"]),
+        // Private key files usually have no extension.
+        FileField::SshKey => dialog.set_title("Choose an SSH private key"),
     };
     let folder = std::path::Path::new(normalized_path(current).as_str())
         .parent()
@@ -2598,6 +2756,7 @@ fn script() -> Task<Message> {
             "url" => Some(Message::FormUrl(arg.to_string())),
             "applyurl" => Some(Message::ApplyUrl),
             "search" => Some(Message::Filter(arg.to_string())),
+            "formend" => Some(Message::ScrollFormEnd),
             "mode" => Some(Message::SetAppearance(match arg {
                 "dark" => Appearance::Dark,
                 "light" => Appearance::Light,

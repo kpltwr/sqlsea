@@ -323,6 +323,8 @@ enum Message {
     EditCell(usize, usize),
     CellInput(String),
     CommitCell,
+    /// Sets the edited cell to NULL.
+    CellNull,
     ToggleDeleteRow,
     ToggleReview,
     SaveChanges,
@@ -358,7 +360,7 @@ enum Message {
     ExportQuery,
     ExportTable,
     /// The saved file and its row count, or nothing if the user closed the dialog.
-    Exported(Result<Option<(String, usize)>, String>),
+    Exported(Result<Option<(String, usize, Option<String>)>, String>),
     CopyRow,
     GridScrolled(grid::Scrolled),
     /// Moves the row selection with the keyboard.
@@ -1413,6 +1415,34 @@ impl Session {
                 }
             }
             Message::CommitCell => self.commit_cell(),
+            Message::CellNull => {
+                let Some((r, c, _)) = self.cell_edit else {
+                    return Task::none();
+                };
+                let Some(column) = self.columns.ready().and_then(|cols| cols.get(c)) else {
+                    return Task::none();
+                };
+                if !column.nullable {
+                    self.status = Some(Notice::Error(format!(
+                        "The column {} cannot be NULL.",
+                        column.name
+                    )));
+                    return Task::none();
+                }
+                self.cell_edit = None;
+                let original = self
+                    .page
+                    .ready()
+                    .and_then(|p| p.result.rows.get(r))
+                    .and_then(|row| row.get(c))
+                    .cloned()
+                    .flatten();
+                if original.is_none() {
+                    self.changes.edited.remove(&(r, c));
+                } else {
+                    self.changes.edited.insert((r, c), None);
+                }
+            }
             Message::ToggleDeleteRow => {
                 if let Some(r) = self.selected
                     && self.editable()
@@ -1622,10 +1652,32 @@ impl Session {
                 }
             }
             Message::ExportQuery => {
-                if let Load::Ready(rs) = &self.queries.active().result {
+                let tab = self.queries.active();
+                if let Load::Ready(rs) = &tab.result {
+                    let name = format!("query-{}", tab.id);
+                    if rs.dropped == 0 {
+                        let rs = rs.clone();
+                        return export(name, None, async move { Ok(rs) });
+                    }
+                    // The result kept only some rows. To export all of them, run the
+                    // query again, but only if it only reads.
+                    if guard::reads_only(&tab.sql) {
+                        return export(
+                            name,
+                            None,
+                            db::execute_all_limited(
+                                self.db.clone(),
+                                self.config.clone(),
+                                tab.sql.clone(),
+                            ),
+                        );
+                    }
+                    let note = format!(
+                        "The query changes data, so sqlsea did not run it again for the other {}.",
+                        count(rs.dropped as u64, "row")
+                    );
                     let rs = rs.clone();
-                    let name = format!("query-{}", self.queries.active().id);
-                    return export(name, async move { Ok(rs) });
+                    return export(name, Some(note), async move { Ok(rs) });
                 }
             }
             Message::ExportTable => {
@@ -1642,15 +1694,20 @@ impl Session {
                             ))
                             .unwrap_or_default()
                     );
-                    return export(table.name.clone(), db::execute_all(self.db.clone(), sql));
+                    return export(
+                        table.name.clone(),
+                        None,
+                        db::execute_all(self.db.clone(), sql),
+                    );
                 }
             }
             Message::Exported(result) => match result {
-                Ok(Some((path, rows))) => {
-                    self.status = Some(Notice::Ok(format!(
-                        "Saved {} to {path}.",
-                        count(rows as u64, "row")
-                    )));
+                Ok(Some((path, rows, note))) => {
+                    let mut text = format!("Saved {} to {path}.", count(rows as u64, "row"));
+                    if let Some(note) = note {
+                        text = format!("{text} {note}");
+                    }
+                    self.status = Some(Notice::Ok(text));
                 }
                 Ok(None) => {}
                 Err(e) => self.status = Some(Notice::Error(format!("Export failed: {e}"))),
@@ -1872,6 +1929,9 @@ impl Session {
                 Key::Named(Named::Escape) => {
                     self.cell_edit = None;
                     Task::none()
+                }
+                Key::Character("n" | "N") if modifiers.command() && modifiers.shift() => {
+                    self.update(Message::CellNull)
                 }
                 Key::Named(Named::Tab) => {
                     self.commit_cell();
@@ -2298,6 +2358,12 @@ impl Session {
                         value,
                         on_input: Message::CellInput,
                         on_submit: Message::CommitCell,
+                        on_null: self
+                            .columns
+                            .ready()
+                            .and_then(|cols| cols.get(*column))
+                            .is_some_and(|col| col.nullable)
+                            .then_some(Message::CellNull),
                     }),
                 changes: Some(&self.changes),
             }),
@@ -2725,8 +2791,10 @@ fn write(db: Db, sql: String, done: String) -> Task<Message> {
 }
 
 /// Asks where to save, then writes CSV or JSON as the file extension tells.
+/// `note` is added to the message after the export.
 fn export(
     name: String,
+    note: Option<String>,
     rows: impl std::future::Future<Output = Result<ResultSet, String>> + Send + 'static,
 ) -> Task<Message> {
     Task::perform(
@@ -2736,7 +2804,7 @@ fn export(
             };
             let rs = rows.await?;
             export::write(&path, &rs)?;
-            Ok(Some((path.display().to_string(), rs.rows.len())))
+            Ok(Some((path.display().to_string(), rs.rows.len(), note)))
         },
         Message::Exported,
     )
@@ -3274,6 +3342,7 @@ fn script() -> Task<Message> {
                 .and_then(|(r, c)| Some(Message::EditCell(r.parse().ok()?, c.parse().ok()?))),
             "cellvalue" => Some(Message::CellInput(arg.to_string())),
             "commitcell" => Some(Message::CommitCell),
+            "cellnull" => Some(Message::CellNull),
             "markdelete" => Some(Message::ToggleDeleteRow),
             "review" => Some(Message::ToggleReview),
             "savechanges" => Some(Message::SaveChanges),

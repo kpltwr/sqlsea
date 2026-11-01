@@ -198,6 +198,56 @@ fn risk(statement: &Statement) -> Option<String> {
     }
 }
 
+/// True if every statement only reads data, so that it is safe to run again.
+/// When in doubt, the answer is false.
+pub fn reads_only(sql: &str) -> bool {
+    const WRITES: &[&str] = &[
+        "insert",
+        "update",
+        "delete",
+        "merge",
+        "upsert",
+        "replace",
+        "create",
+        "drop",
+        "alter",
+        "truncate",
+        "grant",
+        "revoke",
+        "copy",
+        "call",
+        "do",
+        "vacuum",
+        "analyze",
+        "reindex",
+        "refresh",
+        "lock",
+        "set",
+        "reset",
+        "begin",
+        "start",
+        "commit",
+        "rollback",
+        "savepoint",
+        "attach",
+        "detach",
+        "pragma",
+        "into",
+        "for",
+        "nextval",
+        "setval",
+    ];
+    let statements = statements(sql);
+    !statements.is_empty()
+        && statements.iter().all(|statement| {
+            let first = statement.words.first().map(|(w, _)| w.as_str());
+            matches!(first, Some("select" | "with" | "values" | "table" | "show"))
+                // At any depth: `with x as (delete ...)` writes, and
+                // `select ... for update` locks rows.
+                && !statement.words.iter().any(|(w, _)| WRITES.contains(&w.as_str()))
+        })
+}
+
 /// True if the text is one statement at most. A filter must not hide a
 /// second statement.
 pub fn is_single(sql: &str) -> bool {
@@ -263,6 +313,25 @@ mod tests {
             risks("with old as (select id from t) delete from t where id in (select id from old)")
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn knows_which_queries_only_read() {
+        assert!(reads_only("select * from orders where status = 'update'"));
+        assert!(reads_only(
+            "with t as (select 1) select * from t; values (1), (2)"
+        ));
+        assert!(reads_only("-- delete from t\nselect 1"));
+        assert!(!reads_only("insert into t values (1) returning id"));
+        assert!(!reads_only(
+            "with gone as (delete from t returning *) select * from gone"
+        ));
+        assert!(!reads_only("select * into backup from t"));
+        assert!(!reads_only("select * from t for update"));
+        assert!(!reads_only("select nextval('s')"));
+        assert!(!reads_only("select 1; update t set a = 1"));
+        assert!(!reads_only("explain analyze delete from t"));
+        assert!(!reads_only(""));
     }
 
     #[test]

@@ -57,9 +57,9 @@ The search box above the table list finds tables by table name and by column nam
 
 The Data tab shows the open table, 200 rows on each page. Click a column head to sort by that column. To show only some rows, type a condition in the filter box, for example `status = 'paid'`, and press Enter. Click a row to select it.
 
-To edit in the grid, double-click a cell, type the new value and press Enter. Tab goes to the next cell, and Esc cancels the edit. To mark the selected row for deletion, press Delete. Changed cells are blue and rows to delete are red. Nothing changes in the database until you click Save changes. Review SQL shows the statements that sqlsea will run. sqlsea runs all of them in one transaction. If one statement fails, or a row changed after the page loaded, nothing is saved. Before you go to a different page, sort, filter or open a different table, save or discard your changes.
+To edit in the grid, double-click a cell, type the new value and press Enter. Tab goes to the next cell, and Esc cancels the edit. To set the cell to NULL, click NULL in the cell or press Ctrl+Shift+N. To mark the selected row for deletion, press Delete. Changed cells are blue and rows to delete are red. Nothing changes in the database until you click Save changes. Review SQL shows the statements that sqlsea will run. sqlsea runs all of them in one transaction. If one statement fails, or a row changed after the page loaded, nothing is saved. Before you go to a different page, sort, filter or open a different table, save or discard your changes.
 
-To edit a full row, select it and press Enter or click Open row. The row panel opens on the right. Save writes only the fields that you changed. Use the row panel for values with line breaks and to set a value to NULL. Add row inserts a row, and empty fields get their default values.
+To edit a full row, select it and press Enter or click Open row. The row panel opens on the right. Save writes only the fields that you changed. Use the row panel for values with line breaks. Add row inserts a row, and empty fields get their default values.
 
 You can edit rows only in tables that have a primary key. You cannot edit views.
 
@@ -71,7 +71,7 @@ Before sqlsea runs an `UPDATE` or `DELETE` without a `WHERE` clause, a `TRUNCATE
 
 History keeps each query that you run, for each connection. Click a query in the history to put it back in the editor.
 
-Export saves a query result, or a full table from the Data tab, as CSV or JSON. Ctrl+C copies the selected row as tab-separated values.
+Export saves a query result, or a full table from the Data tab, as CSV or JSON. If the result has more rows than the 5,000 that show, sqlsea runs the query again to export all rows. It does this only if the query only reads data. For a query that changes data, the file gets the rows that show. Ctrl+C copies the selected row as tab-separated values.
 
 The top bar has the Auto, Light and Dark themes. Auto uses the theme of your desktop.
 
@@ -87,6 +87,7 @@ The top bar has the Auto, Light and Dark themes. Auto uses the theme of your des
 | Up, Down, Page Up, Page Down, Home, End | Move the row selection |
 | Enter | Open the selected row in the row panel |
 | F2 | Edit the first cell of the selected row |
+| Ctrl+Shift+N | Set the edited cell to NULL |
 | Delete | Mark the selected row for deletion, or unmark it |
 | Esc | Stop the running query, or close the row panel |
 | Tab, Shift+Tab | Go to the next or previous field |

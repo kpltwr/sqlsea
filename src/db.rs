@@ -807,10 +807,24 @@ pub async fn execute_all(db: Db, sql: String) -> Result<ResultSet, String> {
 
 /// Like `execute`. Cancels the query if it runs longer than the time limit.
 pub async fn execute_limited(db: Db, config: Config, sql: String) -> Result<ResultSet, String> {
+    limited(db, config, sql, MAX_ROWS).await
+}
+
+/// Like `execute_limited`, but keeps all rows. Exports use it.
+pub async fn execute_all_limited(db: Db, config: Config, sql: String) -> Result<ResultSet, String> {
+    limited(db, config, sql, usize::MAX).await
+}
+
+async fn limited(db: Db, config: Config, sql: String, cap: usize) -> Result<ResultSet, String> {
     let Some(secs) = config.timeout_secs()? else {
-        return execute(db, sql).await;
+        return execute_capped(db, sql, cap).await;
     };
-    match tokio::time::timeout(Duration::from_secs(secs), execute(db.clone(), sql)).await {
+    match tokio::time::timeout(
+        Duration::from_secs(secs),
+        execute_capped(db.clone(), sql, cap),
+    )
+    .await
+    {
         Ok(result) => result,
         Err(_) => {
             cancel(db, config).await?;
@@ -1424,6 +1438,22 @@ mod tests {
         .unwrap();
         assert_eq!(n, 2);
         assert_eq!(read(db).await, ["x"]);
+    }
+
+    #[tokio::test]
+    async fn exports_get_every_row() {
+        let db = connect(memory()).await.unwrap().db;
+        let sql = "with recursive n(i) as (select 1 union all select i + 1 from n where i < 6000) \
+                   select i from n";
+        let shown = execute_limited(db.clone(), memory(), sql.into())
+            .await
+            .unwrap();
+        assert_eq!(
+            (shown.rows.len(), shown.dropped),
+            (MAX_ROWS, 6000 - MAX_ROWS)
+        );
+        let all = execute_all_limited(db, memory(), sql.into()).await.unwrap();
+        assert_eq!((all.rows.len(), all.dropped), (6000, 0));
     }
 
     #[tokio::test]

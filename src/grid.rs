@@ -63,6 +63,8 @@ pub struct CellEdit<'a, M> {
     pub value: &'a str,
     pub on_input: fn(String) -> M,
     pub on_submit: M,
+    /// Sets the cell to NULL. `None` if the column cannot be NULL.
+    pub on_null: Option<M>,
 }
 
 /// Changes to the rows of a page that are not saved yet.
@@ -169,21 +171,35 @@ pub fn view<'a, M: Clone + 'a>(grid: Grid<'a, M>) -> Element<'a, M> {
             let deleted = changes.is_some_and(|c| c.deleted.contains(&r));
             let cells = Row::with_children(values.iter().enumerate().map(|(i, v)| {
                 if let Some(edit) = edit.as_ref().filter(|e| e.row == r && e.column == i) {
-                    return container(
-                        text_input("", edit.value)
-                            .id("cell-edit")
-                            .on_input(edit.on_input)
-                            .on_submit(edit.on_submit.clone())
-                            .font(theme::MONO)
-                            .size(theme::TEXT_SM)
-                            .padding(Padding::from([4.0, 8.0]))
-                            .style(theme::field),
-                    )
-                    .width(widths[i])
-                    .height(ROW_H)
-                    .padding(Padding::from([1.0, 4.0]))
-                    .center_y(ROW_H)
-                    .into();
+                    let input = text_input("", edit.value)
+                        .id("cell-edit")
+                        .on_input(edit.on_input)
+                        .on_submit(edit.on_submit.clone())
+                        .font(theme::MONO)
+                        .size(theme::TEXT_SM)
+                        .padding(Padding::from([4.0, 8.0]))
+                        .style(theme::field)
+                        .width(Fill);
+                    // The NULL key shows only where the cell has room for it.
+                    let editor: Element<'a, M> = match &edit.on_null {
+                        Some(on_null) if widths[i] >= 140.0 => row![
+                            input,
+                            button(text("NULL").font(theme::MONO).size(11))
+                                .padding(Padding::from([3.0, 6.0]))
+                                .style(theme::null_toggle(false))
+                                .on_press(on_null.clone()),
+                        ]
+                        .spacing(4)
+                        .align_y(iced::Center)
+                        .into(),
+                        _ => input.into(),
+                    };
+                    return container(editor)
+                        .width(widths[i])
+                        .height(ROW_H)
+                        .padding(Padding::from([1.0, 4.0]))
+                        .center_y(ROW_H)
+                        .into();
                 }
                 let changed = changes.and_then(|c| c.edited.get(&(r, i)));
                 let v = changed.unwrap_or(v);

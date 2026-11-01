@@ -19,7 +19,7 @@ pub struct Sql {
     line: usize,
 }
 
-const KEYWORDS: &[&str] = &[
+pub const KEYWORDS: &[&str] = &[
     "add",
     "all",
     "alter",

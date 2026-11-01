@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod chrome;
+mod complete;
 mod db;
 mod dsn;
 mod export;
@@ -156,14 +157,29 @@ struct Session {
     row_filter: String,
     /// The filter that the current page uses.
     applied_filter: Option<String>,
-    /// The column names of each table, for search.
+    /// The column names of each table, for search and suggestions.
     column_index: ColumnIndex,
+    structure: Load<db::Structure>,
+    /// Goes up with each structure load, so that late answers are ignored.
+    structure_run: u64,
+    structure_view: StructureView,
+    structure_sql: text_editor::Content,
     /// For each grid, its scroll position and visible height.
     scrolled: std::collections::HashMap<&'static str, (f32, f32)>,
 }
 
 /// The column names of each table, by schema and table name.
 type ColumnIndex = std::collections::HashMap<(Option<String>, String), Vec<String>>;
+
+/// The parts of the Structure tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StructureView {
+    Columns,
+    Indexes,
+    ForeignKeys,
+    ReferencedBy,
+    Sql,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Move {
@@ -332,6 +348,13 @@ enum Message {
     RowFilter(String),
     ApplyFilter,
     ClearFilter,
+    /// Takes suggestion `n` in the SQL editor.
+    Complete(usize),
+    SwitchStructure(StructureView),
+    StructureLoaded(u64, Result<db::Structure, String>),
+    /// Edits are ignored, so the SQL in the Structure tab is read-only.
+    StructureSqlAction(text_editor::Action),
+    CopyStructureSql,
     /// Runs the statements that the safety check stopped.
     RunAnyway,
     DismissRisks,
@@ -965,6 +988,10 @@ impl Session {
             applied_filter: None,
             scrolled: std::collections::HashMap::new(),
             column_index: ColumnIndex::new(),
+            structure: Load::Idle,
+            structure_run: 0,
+            structure_view: StructureView::Columns,
+            structure_sql: text_editor::Content::new(),
         }
     }
 
@@ -987,6 +1014,23 @@ impl Session {
         self.load_columns()
     }
 
+    /// Loads indexes, keys and SQL, while the Structure tab shows and they are not loaded.
+    fn load_structure(&mut self) -> Task<Message> {
+        if self.tab != Tab::Structure || !matches!(self.structure, Load::Idle) {
+            return Task::none();
+        }
+        let (Some(table), Some(columns)) = (self.current.clone(), self.columns.ready()) else {
+            return Task::none();
+        };
+        self.structure = Load::Loading;
+        self.structure_run += 1;
+        let run = self.structure_run;
+        Task::perform(
+            db::structure(self.db.clone(), table, columns.list.clone()),
+            move |r| Message::StructureLoaded(run, r),
+        )
+    }
+
     fn load_columns(&mut self) -> Task<Message> {
         let Some(table) = self.current.clone() else {
             return Task::none();
@@ -995,6 +1039,7 @@ impl Session {
         let generation = self.generation;
         self.columns = Load::Loading;
         self.page = Load::Loading;
+        self.structure = Load::Idle;
         Task::perform(db::columns(self.db.clone(), table), move |r| {
             Message::ColumnsLoaded(generation, r)
         })
@@ -1090,6 +1135,40 @@ impl Session {
                 if tab == Tab::Query {
                     return operation::focus("sql");
                 }
+                return self.load_structure();
+            }
+            Message::SwitchStructure(view) => self.structure_view = view,
+            Message::StructureLoaded(run, result) => {
+                if run == self.structure_run {
+                    if let Ok(structure) = &result {
+                        self.structure_sql = text_editor::Content::with_text(&structure.sql);
+                    }
+                    self.structure = match result {
+                        Ok(s) => Load::Ready(s),
+                        Err(e) => Load::Failed(e),
+                    };
+                }
+            }
+            Message::StructureSqlAction(action) => {
+                if !action.is_edit() {
+                    self.structure_sql.perform(action);
+                }
+            }
+            Message::CopyStructureSql => {
+                if let Some(structure) = self.structure.ready() {
+                    self.status = Some(Notice::Ok("Copied the SQL.".into()));
+                    return iced::clipboard::write(structure.sql.clone());
+                }
+            }
+            Message::Complete(index) => {
+                let tables = self.tables.ready().map(Vec::as_slice).unwrap_or(&[]);
+                let catalog = complete::Catalog {
+                    tables,
+                    columns: &self.column_index,
+                };
+                self.queries
+                    .tab_mut_for_completion()
+                    .accept(index, &catalog);
             }
             Message::ColumnsLoaded(generation, result) => {
                 if generation != self.generation {
@@ -1098,7 +1177,8 @@ impl Session {
                 match result {
                     Ok(columns) => {
                         self.columns = Load::Ready(Columns::new(columns));
-                        return self.load_page();
+                        let page = self.load_page();
+                        return Task::batch([page, self.load_structure()]);
                     }
                     Err(e) => {
                         self.columns = Load::Failed(e.clone());
@@ -1816,6 +1896,11 @@ impl Session {
 
         let tools: Element<_> = match self.tab {
             Tab::Data => self.data_tools(density, widths.main),
+            Tab::Structure if self.structure_view == StructureView::Sql => small_key(
+                "Copy SQL",
+                theme::key,
+                self.structure.ready().map(|_| Message::CopyStructureSql),
+            ),
             Tab::Structure => space().into(),
             Tab::Query => self.queries.tools(density),
         };
@@ -1852,7 +1937,13 @@ impl Session {
         let content = match self.tab {
             Tab::Data => self.data_view(),
             Tab::Structure => self.structure_view(),
-            Tab::Query => self.queries.view(widths.main, widths.panel),
+            Tab::Query => {
+                let catalog = complete::Catalog {
+                    tables: self.tables.ready().map(Vec::as_slice).unwrap_or(&[]),
+                    columns: &self.column_index,
+                };
+                self.queries.view(widths.main, widths.panel, &catalog)
+            }
         };
 
         column![strip, hrule(), content].into()
@@ -1966,19 +2057,87 @@ impl Session {
         if self.current.is_none() {
             return empty_state("Choose a table on the left to see its columns.", None);
         }
-        match &self.columns {
-            Load::Idle | Load::Loading => grid::skeleton(),
-            Load::Failed(e) => empty_state_error(e),
-            Load::Ready(columns) => grid::view(grid::Grid {
-                result: &columns.listing,
-                selected: None,
-                on_select: None,
-                on_sort: None,
-                sort: None,
-                ids: STRUCTURE_GRID,
-                on_scroll: Message::GridScrolled,
-            }),
-        }
+        let ready = self.structure.ready();
+        let count = |rs: fn(&db::Structure) -> &ResultSet| {
+            ready
+                .map(|s| format!(" ({})", rs(s).rows.len()))
+                .unwrap_or_default()
+        };
+        let parts = [
+            (StructureView::Columns, "Columns".to_string()),
+            (
+                StructureView::Indexes,
+                format!("Indexes{}", count(|s| &s.indexes)),
+            ),
+            (
+                StructureView::ForeignKeys,
+                format!("Foreign keys{}", count(|s| &s.foreign_keys)),
+            ),
+            (
+                StructureView::ReferencedBy,
+                format!("Referenced by{}", count(|s| &s.referenced_by)),
+            ),
+            (StructureView::Sql, "SQL".to_string()),
+        ];
+        let switch = container(
+            Row::with_children(parts.into_iter().map(|(view, label)| {
+                button(
+                    text(label)
+                        .font(theme::BODY_MEDIUM)
+                        .size(theme::TEXT_SM)
+                        .wrapping(text::Wrapping::None),
+                )
+                .padding(Padding::from([5.0, 12.0]))
+                .style(theme::tray_key(view == self.structure_view))
+                .on_press(Message::SwitchStructure(view))
+                .into()
+            }))
+            .spacing(2),
+        )
+        .padding(3)
+        .style(theme::tray);
+        let switch = scrollable(switch).direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::hidden(),
+        ));
+
+        let content: Element<_> = match (self.structure_view, &self.columns, &self.structure) {
+            (StructureView::Columns, Load::Ready(columns), _) => {
+                structure_grid(&columns.listing, "This table has no columns.")
+            }
+            (StructureView::Columns, Load::Failed(e), _) | (_, _, Load::Failed(e)) => {
+                empty_state_error(e)
+            }
+            (StructureView::Columns, _, _) | (_, _, Load::Idle | Load::Loading) => grid::skeleton(),
+            (StructureView::Indexes, _, Load::Ready(s)) => {
+                structure_grid(&s.indexes, "This table has no indexes.")
+            }
+            (StructureView::ForeignKeys, _, Load::Ready(s)) => structure_grid(
+                &s.foreign_keys,
+                "This table has no foreign keys to other tables.",
+            ),
+            (StructureView::ReferencedBy, _, Load::Ready(s)) => structure_grid(
+                &s.referenced_by,
+                "No foreign key in another table points to this table.",
+            ),
+            (StructureView::Sql, _, Load::Ready(_)) => container(
+                text_editor(&self.structure_sql)
+                    .on_action(Message::StructureSqlAction)
+                    .font(theme::MONO)
+                    .size(theme::TEXT_MD)
+                    .padding(16)
+                    .height(Fill)
+                    .highlight_with::<sql::Sql>((), sql::format)
+                    .style(theme::sql_editor),
+            )
+            .style(theme::graphite)
+            .into(),
+        };
+        column![
+            container(switch).padding(Padding::from([8.0, 12.0])),
+            hrule(),
+            content
+        ]
+        .into()
     }
 
     fn inspector_view<'a>(&'a self, ins: &'a Inspector, width: f32) -> Element<'a, Message> {
@@ -2532,6 +2691,22 @@ fn ssh_fields(f: &Config) -> Element<'_, Message> {
     .into()
 }
 
+/// A grid in the Structure tab, or a note if it has no rows.
+fn structure_grid<'a>(rs: &'a ResultSet, empty: &'static str) -> Element<'a, Message> {
+    if rs.rows.is_empty() {
+        return empty_state(empty, None);
+    }
+    grid::view(grid::Grid {
+        result: rs,
+        selected: None,
+        on_select: None,
+        on_sort: None,
+        sort: None,
+        ids: STRUCTURE_GRID,
+        on_scroll: Message::GridScrolled,
+    })
+}
+
 /// A path field with a Browse key that opens the system file dialog.
 fn with_browse<'a>(
     field: text_input::TextInput<'a, Message>,
@@ -2757,6 +2932,14 @@ fn script() -> Task<Message> {
             "applyurl" => Some(Message::ApplyUrl),
             "search" => Some(Message::Filter(arg.to_string())),
             "formend" => Some(Message::ScrollFormEnd),
+            "structure" => Some(Message::SwitchStructure(match arg {
+                "indexes" => StructureView::Indexes,
+                "keys" => StructureView::ForeignKeys,
+                "refs" => StructureView::ReferencedBy,
+                "sql" => StructureView::Sql,
+                _ => StructureView::Columns,
+            })),
+            "complete" => arg.parse().ok().map(Message::Complete),
             "mode" => Some(Message::SetAppearance(match arg {
                 "dark" => Appearance::Dark,
                 "light" => Appearance::Light,

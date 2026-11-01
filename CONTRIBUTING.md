@@ -59,6 +59,7 @@ SQLSEA_SSH_PORT=2222 SQLSEA_SSH_DIR=path/to/keys cargo test -- --ignored ssh_tun
 | `src/sql.rs` | SQL highlighting |
 | `src/tunnel.rs` | SSH tunnels for PostgreSQL |
 | `src/dsn.rs` | Reads connection URLs and libpq connection strings |
+| `src/complete.rs` | Suggestions for the SQL editor |
 | `src/guard.rs` | Splits SQL into statements, and finds statements that change all rows |
 | `src/chrome.rs` | The title bar controls and resize edges on Linux |
 | `src/theme.rs` | All colors, fonts and sizes, for light and dark |
@@ -76,7 +77,7 @@ SQLSEA_SIZE=1024x700 SQLSEA_SCRIPT="table:users;row:2;shot:/tmp/a.png;quit" \
   cargo run --features shot -- ~/data/app.db
 ```
 
-The app runs one step every 1.2 seconds. The steps are `table:<name>`, `tab:data|structure|query`, `row:<n>`, `add`, `edit:<field>=<value>`, `save`, `delete`, `sql:<text>`, `run`, `cancel`, `newtab`, `closetab:<id>`, `history`, `usehist:<n>`, `copy`, `move:up|down|pageup|pagedown|first|last`, `filter:<text>`, `applyfilter`, `anyway`, `readonly:on|off`, `url:<text>`, `applyurl`, `search:<text>`, `pick:<n>`, `kind:pg|sqlite`, `connect`, `forget`, `mode:auto|light|dark`, `shot:<path.png>` and `quit`.
+The app runs one step every 1.2 seconds. The steps are `table:<name>`, `tab:data|structure|query`, `row:<n>`, `add`, `edit:<field>=<value>`, `save`, `delete`, `sql:<text>`, `run`, `cancel`, `newtab`, `closetab:<id>`, `history`, `usehist:<n>`, `copy`, `move:up|down|pageup|pagedown|first|last`, `filter:<text>`, `applyfilter`, `anyway`, `readonly:on|off`, `url:<text>`, `applyurl`, `search:<text>`, `structure:columns|indexes|keys|refs|sql`, `complete:<n>`, `formend`, `pick:<n>`, `kind:pg|sqlite`, `connect`, `forget`, `mode:auto|light|dark`, `shot:<path.png>` and `quit`.
 
 If the screenshots fail, set `ICED_BACKEND=tiny-skia` to use the CPU renderer.
 

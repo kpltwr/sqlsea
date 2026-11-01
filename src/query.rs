@@ -66,6 +66,42 @@ impl QueryTab {
             .unwrap_or_else(|| self.editor.text())
     }
 
+    /// Suggestions for the word at the cursor.
+    pub fn completion(
+        &self,
+        catalog: &crate::complete::Catalog,
+    ) -> Option<crate::complete::Completion> {
+        let cursor = self.editor.cursor();
+        if cursor.selection.is_some() {
+            return None;
+        }
+        let line = self.editor.line(cursor.position.line)?;
+        crate::complete::complete(
+            &self.editor.text(),
+            &line.text,
+            cursor.position.column,
+            catalog,
+        )
+    }
+
+    /// Replaces the word at the cursor with suggestion `index`.
+    pub fn accept(&mut self, index: usize, catalog: &crate::complete::Catalog) {
+        let Some(completion) = self.completion(catalog) else {
+            return;
+        };
+        let Some(item) = completion.items.get(index) else {
+            return;
+        };
+        for _ in completion.prefix.chars() {
+            self.editor
+                .perform(text_editor::Action::Edit(text_editor::Edit::Backspace));
+        }
+        self.editor
+            .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
+                std::sync::Arc::new(item.clone()),
+            )));
+    }
+
     /// Replaces the text of the editor. Undo still works.
     pub fn set_sql(&mut self, sql: String) {
         self.editor.perform(text_editor::Action::SelectAll);
@@ -128,6 +164,11 @@ impl Queries {
 
     pub fn active(&self) -> &QueryTab {
         &self.tabs[self.active]
+    }
+
+    /// The tab that a suggestion goes into: the active tab.
+    pub fn tab_mut_for_completion(&mut self) -> &mut QueryTab {
+        self.active_mut()
     }
 
     pub fn active_mut(&mut self) -> &mut QueryTab {
@@ -226,9 +267,16 @@ impl Queries {
     }
 
     /// `width` is the width of the main area. `panel` is the width of the history panel, if it is open.
-    pub fn view(&self, width: f32, panel: f32) -> Element<'_, Message> {
+    pub fn view(
+        &self,
+        width: f32,
+        panel: f32,
+        catalog: &crate::complete::Catalog,
+    ) -> Element<'_, Message> {
         let tab = self.active();
         let running = tab.running();
+        let completion = tab.completion(catalog);
+        let can_complete = completion.is_some();
         let editor = text_editor(&tab.editor)
             .id("sql")
             .placeholder("select * from …")
@@ -245,6 +293,11 @@ impl Queries {
                 }
                 if matches!(key, Key::Named(Named::Escape)) && running {
                     return Some(text_editor::Binding::Custom(Message::Cancel));
+                }
+                // Tab takes the first suggestion, if there is one.
+                if matches!(key, Key::Named(Named::Tab)) && !press.modifiers.shift() && can_complete
+                {
+                    return Some(text_editor::Binding::Custom(Message::Complete(0)));
                 }
                 if matches!(key, Key::Named(Named::Tab)) && !press.modifiers.shift() {
                     return Some(text_editor::Binding::Sequence(vec![
@@ -296,11 +349,39 @@ impl Queries {
             }
         };
 
+        // The suggestion bar keeps its height when empty, so the editor does not jump.
+        let mut suggestions = Row::new().spacing(4).align_y(Center);
+        if let Some(completion) = &completion {
+            for (i, item) in completion.items.iter().enumerate() {
+                suggestions = suggestions.push(
+                    button(text(item.clone()).font(theme::MONO).size(theme::TEXT_XS))
+                        .padding(Padding::from([3.0, 8.0]))
+                        .style(theme::list_row(i == 0))
+                        .on_press(Message::Complete(i)),
+                );
+            }
+            suggestions = suggestions.push(
+                text("Tab")
+                    .size(theme::TEXT_XS)
+                    .style(theme::text_muted)
+                    .wrapping(text::Wrapping::None),
+            );
+        }
+        let suggestions = container(scrollable(suggestions).direction(
+            scrollable::Direction::Horizontal(scrollable::Scrollbar::hidden()),
+        ))
+        .padding(Padding::from([0.0, 12.0]))
+        .height(32)
+        .center_y(32)
+        .width(Fill)
+        .style(theme::query_strip);
+
         let work = column![
             self.strip(width),
             container(editor)
                 .height(Length::FillPortion(2))
                 .style(theme::graphite),
+            suggestions,
             container(results).height(Length::FillPortion(3)),
         ];
 

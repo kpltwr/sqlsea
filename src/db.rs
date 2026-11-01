@@ -525,6 +525,230 @@ pub async fn columns(db: Db, table: Table) -> Result<Vec<Column>, String> {
     }
 }
 
+/// The indexes and foreign keys of a table, and the SQL that creates it.
+#[derive(Debug, Clone, Default)]
+pub struct Structure {
+    pub indexes: ResultSet,
+    /// Foreign keys from this table to other tables.
+    pub foreign_keys: ResultSet,
+    /// Foreign keys from other tables to this table.
+    pub referenced_by: ResultSet,
+    /// The CREATE statement. SQLite keeps the original. For PostgreSQL it is
+    /// made from the system catalog.
+    pub sql: String,
+}
+
+pub async fn structure(db: Db, table: Table, columns: Vec<Column>) -> Result<Structure, String> {
+    match db {
+        Db::Postgres(_) => pg_structure(db, table, columns).await,
+        Db::Sqlite(_) => sqlite_structure(db, table).await,
+    }
+}
+
+async fn pg_structure(db: Db, table: Table, columns: Vec<Column>) -> Result<Structure, String> {
+    let oid = format!("{}::regclass", literal(Some(&table.qualified())));
+    let indexes = execute_all(
+        db.clone(),
+        format!(
+            "select i.relname as \"Index\", \
+               (select string_agg(a.attname, ', ' order by k.n) \
+                  from unnest(ix.indkey) with ordinality k(attnum, n) \
+                  join pg_attribute a on a.attrelid = ix.indrelid and a.attnum = k.attnum) \
+                 as \"Columns\", \
+               case when ix.indisprimary then 'yes' else '' end as \"Primary key\", \
+               case when ix.indisunique then 'yes' else '' end as \"Unique\", \
+               pg_get_indexdef(ix.indexrelid) as \"Definition\" \
+             from pg_index ix join pg_class i on i.oid = ix.indexrelid \
+             where ix.indrelid = {oid} \
+             order by ix.indisprimary desc, i.relname"
+        ),
+    )
+    .await?;
+    let foreign_keys = execute_all(
+        db.clone(),
+        format!(
+            "select conname as \"Name\", pg_get_constraintdef(oid) as \"Definition\" \
+             from pg_constraint where conrelid = {oid} and contype = 'f' order by 1"
+        ),
+    )
+    .await?;
+    let referenced_by = execute_all(
+        db.clone(),
+        format!(
+            "select conrelid::regclass::text as \"Table\", conname as \"Name\", \
+               pg_get_constraintdef(oid) as \"Definition\" \
+             from pg_constraint where confrelid = {oid} and contype = 'f' order by 1, 2"
+        ),
+    )
+    .await?;
+
+    let kind = execute(
+        db.clone(),
+        format!("select relkind::text from pg_class where oid = {oid}"),
+    )
+    .await?
+    .rows
+    .first()
+    .and_then(|r| r[0].clone())
+    .unwrap_or_default();
+    let sql = if kind == "v" || kind == "m" {
+        let definition = execute(db, format!("select pg_get_viewdef({oid}, true)"))
+            .await?
+            .rows
+            .first()
+            .and_then(|r| r[0].clone())
+            .unwrap_or_default();
+        let what = if kind == "m" {
+            "materialized view"
+        } else {
+            "view"
+        };
+        format!(
+            "create {what} {} as\n{}",
+            table.qualified(),
+            definition.trim_end()
+        )
+    } else {
+        // PostgreSQL does not keep the CREATE TABLE text, so it is rebuilt from
+        // the columns, the constraints and the indexes that no constraint owns.
+        let constraints = execute_all(
+            db.clone(),
+            format!(
+                "select conname, pg_get_constraintdef(oid) from pg_constraint \
+                 where conrelid = {oid} and contype in ('p','u','c','f','x') \
+                 order by contype = 'p' desc, contype, conname"
+            ),
+        )
+        .await?;
+        let other_indexes = execute_all(
+            db,
+            format!(
+                "select pg_get_indexdef(ix.indexrelid) from pg_index ix \
+                 where ix.indrelid = {oid} \
+                   and not exists (select 1 from pg_constraint c where c.conindid = ix.indexrelid) \
+                 order by 1"
+            ),
+        )
+        .await?;
+        let mut lines: Vec<String> = columns
+            .iter()
+            .map(|c| {
+                let mut line = format!("    {} {}", ident(&c.name), c.data_type);
+                if let Some(default) = &c.default {
+                    line.push_str(&format!(" default {default}"));
+                }
+                if !c.nullable {
+                    line.push_str(" not null");
+                }
+                line
+            })
+            .collect();
+        for row in &constraints.rows {
+            if let (Some(name), Some(definition)) = (&row[0], &row[1]) {
+                lines.push(format!("    constraint {} {definition}", ident(name)));
+            }
+        }
+        let mut sql = format!(
+            "create table {} (\n{}\n);",
+            table.qualified(),
+            lines.join(",\n")
+        );
+        for row in &other_indexes.rows {
+            if let Some(definition) = &row[0] {
+                sql.push_str(&format!("\n\n{definition};"));
+            }
+        }
+        sql
+    };
+    Ok(Structure {
+        indexes,
+        foreign_keys,
+        referenced_by,
+        sql,
+    })
+}
+
+async fn sqlite_structure(db: Db, table: Table) -> Result<Structure, String> {
+    let name = literal(Some(&table.name));
+    let indexes = execute_all(
+        db.clone(),
+        format!(
+            "select il.name as \"Index\", \
+               (select group_concat(name, ', ') from \
+                  (select name from pragma_index_info(il.name) order by seqno)) as \"Columns\", \
+               case when il.origin = 'pk' then 'yes' else '' end as \"Primary key\", \
+               case when il.\"unique\" then 'yes' else '' end as \"Unique\", \
+               coalesce(m.sql, case il.origin when 'pk' then 'From the PRIMARY KEY' \
+                 when 'u' then 'From a UNIQUE constraint' end) as \"Definition\" \
+             from pragma_index_list({name}) il \
+             left join sqlite_master m on m.type = 'index' and m.name = il.name \
+             order by il.origin = 'pk' desc, il.name"
+        ),
+    )
+    .await?;
+
+    // SQLite foreign keys have no names, and each column of a key is one row.
+    let keys = execute_all(
+        db.clone(),
+        format!(
+            "select id, \"table\", group_concat(\"from\", ', '), group_concat(\"to\", ', '), \
+               on_delete, on_update \
+             from (select * from pragma_foreign_key_list({name}) order by id, seq) \
+             group by id order by id"
+        ),
+    )
+    .await?;
+    let foreign_keys = ResultSet {
+        columns: vec!["Columns".into(), "Definition".into()],
+        rows: keys
+            .rows
+            .iter()
+            .map(|r| {
+                let get = |i: usize| r[i].clone().unwrap_or_default();
+                let mut definition = format!("references {}({})", get(1), get(3));
+                for (what, action) in [("on delete", get(4)), ("on update", get(5))] {
+                    if action != "NO ACTION" && !action.is_empty() {
+                        definition.push_str(&format!(" {what} {}", action.to_lowercase()));
+                    }
+                }
+                vec![Some(get(2)), Some(definition)]
+            })
+            .collect(),
+        ..Default::default()
+    };
+    let referenced_by = execute_all(
+        db.clone(),
+        format!(
+            "select m.name as \"Table\", group_concat(f.\"from\", ', ') as \"Columns\", \
+               group_concat(f.\"to\", ', ') as \"References\" \
+             from sqlite_master m join pragma_foreign_key_list(m.name) f \
+             where m.type = 'table' and f.\"table\" = {name} collate nocase \
+             group by m.name, f.id order by 1"
+        ),
+    )
+    .await?;
+    let sql = execute_all(
+        db,
+        format!(
+            "select sql from sqlite_master where tbl_name = {name} and sql is not null \
+             order by type in ('table', 'view') desc, type, name"
+        ),
+    )
+    .await?
+    .rows
+    .into_iter()
+    .filter_map(|r| r.into_iter().next().flatten())
+    .map(|sql| format!("{};", sql.trim_end_matches(';')))
+    .collect::<Vec<_>>()
+    .join("\n\n");
+    Ok(Structure {
+        indexes,
+        foreign_keys,
+        referenced_by,
+        sql,
+    })
+}
+
 /// One page of a table. `filter` is a condition for the `WHERE` clause.
 pub async fn page(
     db: Db,
@@ -1035,6 +1259,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sqlite_structure_lists_indexes_keys_and_sql() {
+        let db = connect(memory()).await.unwrap().db;
+        execute(
+            db.clone(),
+            "create table customers (id integer primary key, email text unique); \
+             create table orders (id integer primary key, \
+               customer_id integer references customers(id) on delete cascade, \
+               placed text); \
+             create index orders_placed on orders (placed, customer_id);"
+                .into(),
+        )
+        .await
+        .unwrap();
+        let table = |name: &str| Table {
+            schema: None,
+            name: name.into(),
+            is_view: false,
+        };
+        let orders = structure(db.clone(), table("orders"), Vec::new())
+            .await
+            .unwrap();
+        assert_eq!(orders.indexes.rows.len(), 1);
+        assert_eq!(
+            orders.indexes.rows[0][1].as_deref(),
+            Some("placed, customer_id")
+        );
+        assert_eq!(
+            orders.foreign_keys.rows[0][1].as_deref(),
+            Some("references customers(id) on delete cascade")
+        );
+        assert!(
+            orders.sql.starts_with("CREATE TABLE orders"),
+            "{}",
+            orders.sql
+        );
+        assert!(orders.sql.contains("CREATE INDEX orders_placed"));
+        let customers = structure(db, table("customers"), Vec::new()).await.unwrap();
+        assert_eq!(
+            customers.referenced_by.rows[0][0].as_deref(),
+            Some("orders")
+        );
+        assert_eq!(
+            customers.indexes.rows[0][4].as_deref(),
+            Some("From a UNIQUE constraint")
+        );
+    }
+
+    #[tokio::test]
     async fn pages_can_be_filtered() {
         let db = connect(memory()).await.unwrap().db;
         execute(
@@ -1148,6 +1420,74 @@ mod tests {
             missing.contains("CA certificate file did not open"),
             "{missing}"
         );
+
+        // The structure of a PostgreSQL table, and the CREATE statement made for it.
+        let db = connect(pg(plain.clone(), "localhost", Tls::Off, ""))
+            .await
+            .unwrap()
+            .db;
+        execute(
+            db.clone(),
+            "drop table if exists sq_orders, sq_customers cascade; \
+             create table sq_customers (id serial primary key, email text not null unique); \
+             create table sq_orders (id bigint generated always as identity primary key, \
+               customer_id int references sq_customers(id) on delete cascade, \
+               qty int not null default 1 check (qty > 0)); \
+             create index sq_orders_customer on sq_orders (customer_id); \
+             create view sq_big as select * from sq_orders where qty > 10;"
+                .into(),
+        )
+        .await
+        .unwrap();
+        let table = |name: &str, is_view| Table {
+            schema: Some("public".into()),
+            name: name.into(),
+            is_view,
+        };
+        let cols = columns(db.clone(), table("sq_orders", false))
+            .await
+            .unwrap();
+        let s = structure(db.clone(), table("sq_orders", false), cols)
+            .await
+            .unwrap();
+        assert_eq!(s.indexes.rows.len(), 2, "{:?}", s.indexes.rows);
+        assert!(
+            s.foreign_keys.rows[0][1]
+                .as_deref()
+                .unwrap()
+                .contains("ON DELETE CASCADE")
+        );
+        assert!(
+            s.sql.starts_with("create table \"public\".\"sq_orders\" ("),
+            "{}",
+            s.sql
+        );
+        assert!(
+            s.sql.contains("\"qty\" integer default 1 not null"),
+            "{}",
+            s.sql
+        );
+        assert!(s.sql.contains("CHECK ((qty > 0))"), "{}", s.sql);
+        assert!(
+            s.sql.contains("CREATE INDEX sq_orders_customer"),
+            "{}",
+            s.sql
+        );
+        let s = structure(db.clone(), table("sq_customers", false), Vec::new())
+            .await
+            .unwrap();
+        assert_eq!(s.referenced_by.rows[0][0].as_deref(), Some("sq_orders"));
+        let s = structure(db.clone(), table("sq_big", true), Vec::new())
+            .await
+            .unwrap();
+        assert!(
+            s.sql.starts_with("create view \"public\".\"sq_big\" as\n"),
+            "{}",
+            s.sql
+        );
+        execute(db, "drop table sq_orders, sq_customers cascade".into())
+            .await
+            .unwrap();
 
         // A read-only connection reads, and the server refuses changes.
         let read_only = Config {

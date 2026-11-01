@@ -57,9 +57,9 @@ The search box above the table list finds tables by table name and by column nam
 
 The Data tab shows the open table, 200 rows on each page. Click a column head to sort by that column. To show only some rows, type a condition in the filter box, for example `status = 'paid'`, and press Enter. Click a row to edit it in the panel on the right. Save writes only the fields that you changed. Add row inserts a row, and empty fields get their default values. You can edit rows only in tables that have a primary key. You cannot edit views.
 
-The Structure tab shows the columns, their types and defaults, and the primary key.
+The Structure tab has five parts. Columns shows the columns, their types and defaults, and the primary key. Indexes shows the indexes and their columns. Foreign keys shows the keys to other tables, and Referenced by shows the keys in other tables that point to this table. SQL shows the CREATE statement, and Copy SQL copies it. SQLite keeps the original statement. For PostgreSQL, sqlsea makes the statement from the system catalog.
 
-In the Query tab, write SQL and press Ctrl+Enter. If you select text, only that text runs. The result shows up to 5,000 rows. Each query tab keeps its own SQL and result. To stop a running query, click Cancel or press Esc. To stop long queries automatically, set a time limit in seconds for the connection.
+In the Query tab, write SQL and press Ctrl+Enter. As you type, the bar below the editor suggests tables, columns and keywords. Press Tab or click a suggestion to use it. After a table name or an alias and a period, for example `o.` in `from orders o`, it suggests the columns of that table. If you select text, only that text runs. The result shows up to 5,000 rows. Each query tab keeps its own SQL and result. To stop a running query, click Cancel or press Esc. To stop long queries automatically, set a time limit in seconds for the connection.
 
 Before sqlsea runs an `UPDATE` or `DELETE` without a `WHERE` clause, a `TRUNCATE`, or a `DROP` of a table, schema or database, it asks you to confirm. These statements change or remove all rows. The check reads the SQL text only, so it does not find every risk.
 

@@ -361,6 +361,55 @@ pub async fn tables(db: Db) -> Result<Vec<Table>, String> {
     }
 }
 
+/// The column names of every table, for search. The key is the schema and
+/// the table name.
+pub async fn column_index(
+    db: Db,
+) -> Result<std::collections::HashMap<(Option<String>, String), Vec<String>>, String> {
+    let rs = match db {
+        Db::Postgres(_) => {
+            execute_all(
+                db,
+                "select n.nspname, c.relname, a.attname \
+                 from pg_attribute a \
+                 join pg_class c on c.oid = a.attrelid \
+                 join pg_namespace n on n.oid = c.relnamespace \
+                 where c.relkind in ('r','v','m','p','f') and a.attnum > 0 \
+                   and not a.attisdropped \
+                   and n.nspname not in ('pg_catalog','information_schema') \
+                   and n.nspname not like 'pg_toast%' \
+                 order by 1, 2, a.attnum"
+                    .into(),
+            )
+            .await?
+        }
+        Db::Sqlite(_) => {
+            execute_all(
+                db,
+                "select null, m.name, p.name from sqlite_master m \
+                 join pragma_table_info(m.name) p \
+                 where m.type in ('table','view') and m.name not like 'sqlite_%' \
+                 order by m.name, p.cid"
+                    .into(),
+            )
+            .await?
+        }
+    };
+    let mut index: std::collections::HashMap<_, Vec<String>> = std::collections::HashMap::new();
+    for row in rs.rows {
+        let mut row = row.into_iter();
+        let (schema, table, column) = (
+            row.next().flatten(),
+            row.next().flatten(),
+            row.next().flatten(),
+        );
+        if let (Some(table), Some(column)) = (table, column) {
+            index.entry((schema, table)).or_default().push(column);
+        }
+    }
+    Ok(index)
+}
+
 pub async fn columns(db: Db, table: Table) -> Result<Vec<Column>, String> {
     match db {
         Db::Postgres(_) => {
@@ -849,6 +898,8 @@ mod tests {
         );
         let tables = tables(db.clone()).await.unwrap();
         assert_eq!(tables[0].name, "t");
+        let index = column_index(db.clone()).await.unwrap();
+        assert_eq!(index[&(None, "t".to_string())], ["id", "v"]);
         let cols = columns(db, tables[0].clone()).await.unwrap();
         assert!(cols[0].primary_key && !cols[1].primary_key);
     }

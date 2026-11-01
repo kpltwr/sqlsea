@@ -3,6 +3,7 @@
 
 mod chrome;
 mod db;
+mod dsn;
 mod export;
 mod fit;
 mod grid;
@@ -121,6 +122,8 @@ struct App {
     editing: Option<usize>,
     busy: bool,
     notice: Option<Notice>,
+    /// A connection URL that the user pasted, before it fills in the form.
+    url: String,
     session: Option<Session>,
     appearance: Appearance,
     /// The theme of the desktop, for `Appearance::Auto`.
@@ -150,9 +153,14 @@ struct Session {
     row_filter: String,
     /// The filter that the current page uses.
     applied_filter: Option<String>,
+    /// The column names of each table, for search.
+    column_index: ColumnIndex,
     /// For each grid, its scroll position and visible height.
     scrolled: std::collections::HashMap<&'static str, (f32, f32)>,
 }
+
+/// The column names of each table, by schema and table name.
+type ColumnIndex = std::collections::HashMap<(Option<String>, String), Vec<String>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Move {
@@ -325,6 +333,9 @@ enum Message {
     RunAnyway,
     DismissRisks,
     FormReadOnly(bool),
+    FormUrl(String),
+    ApplyUrl,
+    ColumnIndex(Result<ColumnIndex, String>),
     Key(keyboard::Event),
     SetAppearance(Appearance),
     Window(chrome::Action),
@@ -341,6 +352,7 @@ impl App {
             editing: None,
             busy: false,
             notice: keyring_problem.map(Notice::Error),
+            url: String::new(),
             session: None,
             saved,
             appearance: store::load_settings().appearance,
@@ -407,11 +419,27 @@ impl App {
                 self.form = self.saved[i].clone();
                 self.editing = Some(i);
                 self.notice = None;
+                self.url.clear();
             }
             Message::NewConnection => {
                 self.form = Config::default();
                 self.editing = None;
                 self.notice = None;
+                self.url.clear();
+            }
+            Message::FormUrl(v) => self.url = v,
+            Message::ApplyUrl => {
+                let mut form = self.form.clone();
+                match dsn::apply(&self.url, &mut form) {
+                    Ok(()) => {
+                        self.form = form;
+                        // The URL can hold the password, so it does not stay on screen.
+                        self.url.clear();
+                        self.notice =
+                            Some(Notice::Ok("The form is filled in from the URL.".into()));
+                    }
+                    Err(e) => self.notice = Some(Notice::Error(e)),
+                }
             }
             Message::FormKind(kind) => {
                 // A message about one kind of database is not correct for the other kind.
@@ -660,11 +688,36 @@ impl App {
         .padding(3)
         .style(theme::tray);
 
-        let mut fields = column![labelled(
+        let mut fields = column![].spacing(14);
+        if f.kind == Kind::Postgres {
+            fields = fields.push(labelled(
+                "Connection URL",
+                row![
+                    text_input(
+                        "Paste a URL, for example postgres://user@host/db",
+                        &self.url
+                    )
+                    .on_input(Message::FormUrl)
+                    .on_submit(Message::ApplyUrl)
+                    .font(theme::MONO)
+                    .padding(Padding::from([7.0, 10.0]))
+                    .size(theme::TEXT_MD)
+                    .style(theme::field)
+                    .width(Fill),
+                    small_key(
+                        "Fill in",
+                        theme::key,
+                        (!self.url.trim().is_empty()).then_some(Message::ApplyUrl),
+                    ),
+                ]
+                .spacing(8)
+                .align_y(Center),
+            ));
+        }
+        fields = fields.push(labelled(
             "Name",
-            input("My database", &f.name, Message::FormName)
-        )]
-        .spacing(14);
+            input("My database", &f.name, Message::FormName),
+        ));
         fields = match f.kind {
             Kind::Postgres => fields
                 .push(
@@ -859,6 +912,7 @@ impl Session {
             row_filter: String::new(),
             applied_filter: None,
             scrolled: std::collections::HashMap::new(),
+            column_index: ColumnIndex::new(),
         }
     }
 
@@ -952,15 +1006,21 @@ impl Session {
                     let keep = self.current.as_ref().is_some_and(|t| tables.contains(t));
                     let first = tables.first().cloned();
                     self.tables = Load::Ready(tables);
+                    // Search by column name needs every column, which can take a moment.
+                    let index =
+                        Task::perform(db::column_index(self.db.clone()), Message::ColumnIndex);
                     if !keep {
                         self.current = None;
                         if let Some(first) = first.filter(|_| self.tab != Tab::Query) {
-                            return self.open(first);
+                            return Task::batch([index, self.open(first)]);
                         }
                     }
+                    return index;
                 }
                 Err(e) => self.tables = Load::Failed(e),
             },
+            // Without the index, search still finds tables by name.
+            Message::ColumnIndex(result) => self.column_index = result.unwrap_or_default(),
             Message::Filter(f) => self.filter = f,
             Message::OpenTable(table) => return self.open(table),
             #[cfg(feature = "shot")]
@@ -1488,6 +1548,11 @@ impl Session {
             }
             Key::Character("c") if modifiers.command() => self.update(Message::CopyRow),
             Key::Character("r") if modifiers.command() => self.update(Message::Refresh),
+            Key::Character("p") if modifiers.command() => operation::focus("table-search"),
+            Key::Character("f") if modifiers.command() && self.current.is_some() => {
+                self.tab = Tab::Data;
+                operation::focus("row-filter")
+            }
             Key::Character("1") if modifiers.command() => {
                 self.update(Message::SwitchTab(Tab::Data))
             }
@@ -1575,7 +1640,8 @@ impl Session {
     }
 
     fn sidebar(&self) -> Element<'_, Message> {
-        let filter = text_input("Filter tables", &self.filter)
+        let filter = text_input("Search tables and columns", &self.filter)
+            .id("table-search")
             .on_input(Message::Filter)
             .padding(Padding::from([6.0, 10.0]))
             .size(theme::TEXT_MD)
@@ -1594,17 +1660,35 @@ impl Session {
             }
             Load::Ready(tables) => {
                 let needle = self.filter.trim().to_lowercase();
-                let shown: Vec<&Table> = tables
+                // A table shows if its name matches, or if one of its columns does.
+                // Then the matching columns show below the name.
+                let shown: Vec<(&Table, Vec<&str>)> = tables
                     .iter()
-                    .filter(|t| needle.is_empty() || t.name.to_lowercase().contains(&needle))
+                    .filter_map(|t| {
+                        if needle.is_empty() || t.name.to_lowercase().contains(&needle) {
+                            return Some((t, Vec::new()));
+                        }
+                        let columns: Vec<&str> = self
+                            .column_index
+                            .get(&(t.schema.clone(), t.name.clone()))
+                            .into_iter()
+                            .flatten()
+                            .filter(|c| c.to_lowercase().contains(&needle))
+                            .map(String::as_str)
+                            .collect();
+                        (!columns.is_empty()).then_some((t, columns))
+                    })
                     .collect();
                 if shown.is_empty() {
-                    muted(format!("No table matches “{}”.", self.filter.trim()))
+                    muted(format!(
+                        "No table or column matches “{}”.",
+                        self.filter.trim()
+                    ))
                 } else {
                     let many_schemas = tables.iter().any(|t| t.schema != tables[0].schema);
                     let mut list = Column::new().spacing(1);
                     let mut last_schema: Option<&Option<String>> = None;
-                    for t in shown {
+                    for (t, columns) in shown {
                         if many_schemas && last_schema != Some(&t.schema) {
                             list = list.push(
                                 container(
@@ -1625,8 +1709,17 @@ impl Session {
                             label = label
                                 .push(text("view").size(theme::TEXT_XS).style(theme::text_muted));
                         }
+                        let mut entry = column![label].spacing(2);
+                        if !columns.is_empty() {
+                            entry = entry.push(
+                                fit(columns.join(", "))
+                                    .font(theme::MONO)
+                                    .size(theme::TEXT_XS)
+                                    .style(theme::text_muted),
+                            );
+                        }
                         list = list.push(
-                            button(label)
+                            button(entry)
                                 .width(Fill)
                                 .padding(Padding::from([5.0, 10.0]))
                                 .style(theme::list_row(selected))
@@ -1795,6 +1888,7 @@ impl Session {
 
         // The filter box, with a key to clear the filter while one is used.
         let filter = text_input("Filter rows, for example status = 'paid'", &self.row_filter)
+            .id("row-filter")
             .on_input(Message::RowFilter)
             .on_submit(Message::ApplyFilter)
             .font(theme::MONO)
@@ -2501,6 +2595,9 @@ fn script() -> Task<Message> {
             "applyfilter" => Some(Message::ApplyFilter),
             "anyway" => Some(Message::RunAnyway),
             "readonly" => Some(Message::FormReadOnly(arg != "off")),
+            "url" => Some(Message::FormUrl(arg.to_string())),
+            "applyurl" => Some(Message::ApplyUrl),
+            "search" => Some(Message::Filter(arg.to_string())),
             "mode" => Some(Message::SetAppearance(match arg {
                 "dark" => Appearance::Dark,
                 "light" => Appearance::Light,

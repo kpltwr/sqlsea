@@ -49,7 +49,11 @@ On Linux, `cargo build --release && packaging/linux/install.sh` adds the build t
 
 To connect, fill in the form and click Connect. For a SQLite file or a CA certificate, you can type the path or click Browse. A connection that works is saved.
 
+If your provider gives you a PostgreSQL connection URL, paste it in Connection URL and click Fill in. sqlsea reads URLs such as `postgres://user:password@host:5432/db?sslmode=require` and lists such as `host=... dbname=... sslmode=verify-full`. sqlsea does not save the URL. It saves the password in the keyring, as for all connections.
+
 Select Read-only for a connection to a database that you must not change, such as a production database. The database then refuses all changes on that connection.
+
+The search box above the table list finds tables by table name and by column name. If only a column name matches, the column shows below the table name.
 
 The Data tab shows the open table, 200 rows on each page. Click a column head to sort by that column. To show only some rows, type a condition in the filter box, for example `status = 'paid'`, and press Enter. Click a row to edit it in the panel on the right. Save writes only the fields that you changed. Add row inserts a row, and empty fields get their default values. You can edit rows only in tables that have a primary key. You cannot edit views.
 
@@ -70,6 +74,8 @@ The top bar has the Auto, Light and Dark themes. Auto uses the theme of your des
 | Ctrl+Enter | Run the query |
 | Ctrl+T, Ctrl+W | Open or close a query tab |
 | Ctrl+C | Copy the selected row |
+| Ctrl+P | Search tables and columns |
+| Ctrl+F | Filter the rows of the open table |
 | Ctrl+R | Reload the tables and the open table |
 | Ctrl+1, 2, 3 | Go to Data, Structure or Query |
 | Up, Down, Page Up, Page Down, Home, End | Move the row selection |

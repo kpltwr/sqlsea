@@ -45,6 +45,7 @@ SQLSEA_TLS_PORT=55433 SQLSEA_TLS_CA=path/to/ca.crt SQLSEA_PLAIN_PORT=55432 \
 | `src/fit.rs` | One line of text that ends in "…" if it does not fit |
 | `src/export.rs` | CSV, JSON and clipboard output |
 | `src/sql.rs` | SQL highlighting |
+| `src/dsn.rs` | Reads connection URLs and libpq connection strings |
 | `src/guard.rs` | Splits SQL into statements, and finds statements that change all rows |
 | `src/chrome.rs` | The title bar controls and resize edges on Linux |
 | `src/theme.rs` | All colors, fonts and sizes, for light and dark |
@@ -62,7 +63,7 @@ SQLSEA_SIZE=1024x700 SQLSEA_SCRIPT="table:users;row:2;shot:/tmp/a.png;quit" \
   cargo run --features shot -- ~/data/app.db
 ```
 
-The app runs one step every 1.2 seconds. The steps are `table:<name>`, `tab:data|structure|query`, `row:<n>`, `add`, `edit:<field>=<value>`, `save`, `delete`, `sql:<text>`, `run`, `cancel`, `newtab`, `closetab:<id>`, `history`, `usehist:<n>`, `copy`, `move:up|down|pageup|pagedown|first|last`, `filter:<text>`, `applyfilter`, `anyway`, `readonly:on|off`, `pick:<n>`, `kind:pg|sqlite`, `connect`, `forget`, `mode:auto|light|dark`, `shot:<path.png>` and `quit`.
+The app runs one step every 1.2 seconds. The steps are `table:<name>`, `tab:data|structure|query`, `row:<n>`, `add`, `edit:<field>=<value>`, `save`, `delete`, `sql:<text>`, `run`, `cancel`, `newtab`, `closetab:<id>`, `history`, `usehist:<n>`, `copy`, `move:up|down|pageup|pagedown|first|last`, `filter:<text>`, `applyfilter`, `anyway`, `readonly:on|off`, `url:<text>`, `applyurl`, `search:<text>`, `pick:<n>`, `kind:pg|sqlite`, `connect`, `forget`, `mode:auto|light|dark`, `shot:<path.png>` and `quit`.
 
 If the screenshots fail, set `ICED_BACKEND=tiny-skia` to use the CPU renderer.
 

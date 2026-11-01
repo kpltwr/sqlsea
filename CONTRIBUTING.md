@@ -77,9 +77,13 @@ SQLSEA_SIZE=1024x700 SQLSEA_SCRIPT="table:users;row:2;shot:/tmp/a.png;quit" \
   cargo run --features shot -- ~/data/app.db
 ```
 
-The app runs one step every 1.2 seconds. The steps are `table:<name>`, `tab:data|structure|query`, `row:<n>` (open a row in the row panel), `add`, `edit:<field>=<value>`, `save`, `delete`, `sql:<text>`, `run`, `cancel`, `newtab`, `closetab:<id>`, `history`, `usehist:<n>`, `copy`, `move:up|down|pageup|pagedown|first|last`, `filter:<text>`, `applyfilter`, `anyway`, `readonly:on|off`, `url:<text>`, `applyurl`, `search:<text>`, `structure:columns|indexes|keys|refs|sql`, `complete:<n>`, `select:<n>`, `editcell:<row>,<column>`, `cellvalue:<text>`, `commitcell`, `cellnull`, `markdelete`, `review`, `savechanges`, `discardchanges`, `formend`, `pick:<n>`, `kind:pg|sqlite`, `connect`, `forget`, `mode:auto|light|dark`, `shot:<path.png>` and `quit`.
+The app runs one step every 1.2 seconds. The steps are `table:<name>`, `tab:data|structure|query`, `row:<n>` (open a row in the row panel), `add`, `edit:<field>=<value>`, `save`, `delete`, `sql:<text>`, `run`, `cancel`, `newtab`, `closetab:<id>`, `history`, `usehist:<n>`, `copy`, `move:up|down|pageup|pagedown|first|last`, `filter:<text>`, `applyfilter`, `anyway`, `readonly:on|off`, `url:<text>`, `applyurl`, `search:<text>`, `structure:columns|indexes|keys|refs|sql`, `complete:<n>`, `select:<n>`, `editcell:<row>,<column>`, `cellvalue:<text>`, `commitcell`, `cellnull`, `markdelete`, `review`, `savechanges`, `discardchanges`, `formend`, `scrollquery:<y>`, `pick:<n>`, `kind:pg|sqlite`, `connect`, `forget`, `mode:auto|light|dark`, `shot:<path.png>` and `quit`.
 
 If the screenshots fail, set `ICED_BACKEND=tiny-skia` to use the CPU renderer.
+
+The grid builds only the rows near the view. To build all rows and compare, set `SQLSEA_ALL_ROWS=1`.
+
+A release build takes a few minutes, because it optimizes the whole program at once (`lto = "fat"` in `Cargo.toml`).
 
 ## License
 

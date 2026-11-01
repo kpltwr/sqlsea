@@ -15,7 +15,7 @@ const PAD_X: f32 = 12.0;
 const ROW_H: f32 = 30.0;
 const MIN_W: f32 = 72.0;
 const MAX_W: f32 = 360.0;
-/// Rows sampled when sizing columns.
+/// Rows sampled when sizing columns. They are spread over the whole result.
 const SAMPLE: usize = 200;
 const MAX_CHARS: usize = 160;
 /// The width of the scrollbar, with its margins.
@@ -54,7 +54,14 @@ pub struct Grid<'a, M> {
     pub edit: Option<CellEdit<'a, M>>,
     /// Changes that are not saved yet.
     pub changes: Option<&'a Changes>,
+    /// Where the rows are scrolled to, and their visible height, as the grid
+    /// last told. Only the rows near the view are built.
+    pub viewport: Option<(f32, f32)>,
 }
+
+/// Rows built above and below the visible rows, so that fast scrolling does
+/// not show empty space.
+const OVERSCAN: usize = 10;
 
 /// A cell that shows a text field.
 pub struct CellEdit<'a, M> {
@@ -91,6 +98,8 @@ fn widths(rs: &ResultSet) -> Vec<f32> {
             let body = rs
                 .rows
                 .iter()
+                // Rows from the whole result, so that long values further down count.
+                .step_by((rs.rows.len() / SAMPLE).max(1))
                 .take(SAMPLE)
                 .map(|r| {
                     r[i].as_deref()
@@ -127,6 +136,7 @@ pub fn view<'a, M: Clone + 'a>(grid: Grid<'a, M>) -> Element<'a, M> {
         on_edit,
         edit,
         changes,
+        viewport,
     } = grid;
     let base = widths(result);
 
@@ -167,7 +177,26 @@ pub fn view<'a, M: Clone + 'a>(grid: Grid<'a, M>) -> Element<'a, M> {
                 .into()
         }));
 
-        let rows = Column::with_children(result.rows.iter().enumerate().map(|(r, values)| {
+        // Only the rows near the view are built. Space of the same height stands
+        // in for the others, so the scrollbar and the scroll position stay correct.
+        let count = result.rows.len();
+        let (top, height) = viewport.unwrap_or((0.0, 900.0));
+        let first = ((top / ROW_STEP) as usize)
+            .saturating_sub(OVERSCAN)
+            .min(count);
+        let last = (((top + height) / ROW_STEP).ceil() as usize + OVERSCAN).min(count);
+        // Screenshot builds can build every row, to measure the difference.
+        #[cfg(feature = "shot")]
+        let (first, last) = if std::env::var_os("SQLSEA_ALL_ROWS").is_some() {
+            (0, count)
+        } else {
+            (first, last)
+        };
+        let built = result.rows[first..last]
+            .iter()
+            .enumerate()
+            .map(|(i, values)| (first + i, values));
+        let rows = Column::with_children(built.map(|(r, values)| {
             let deleted = changes.is_some_and(|c| c.deleted.contains(&r));
             let cells = Row::with_children(values.iter().enumerate().map(|(i, v)| {
                 if let Some(edit) = edit.as_ref().filter(|e| e.row == r && e.column == i) {
@@ -262,6 +291,13 @@ pub fn view<'a, M: Clone + 'a>(grid: Grid<'a, M>) -> Element<'a, M> {
             ]
             .into()
         }));
+        let rows = column![
+            space().width(total).height(first as f32 * ROW_STEP),
+            rows,
+            space()
+                .width(total)
+                .height((count - last) as f32 * ROW_STEP),
+        ];
 
         let bar = scrollable::Scrollbar::new()
             .width(8)

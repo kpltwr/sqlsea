@@ -12,7 +12,7 @@ categories = ["database", "gui"]
 
 [dependencies]
 dirs-next = "2.0.0"
-iced = { version = "0.14", features = ["tokio", "advanced", "svg"] }
+iced = { version = "0.14", features = ["tokio", "advanced", "image-without-codecs"] }
 keyring = "4.2"
 png = "0.18.1"
 rfd = "0.17.2"
@@ -30,9 +30,57 @@ tokio-postgres-rustls = { version = "0.14", features = ["ring"] }
 # Scripted screenshots for design review: SQLSEA_SCRIPT="...;shot:/tmp/a.png;quit"
 shot = []
 
+# Smaller and faster release builds. The build takes longer.
 [profile.release]
-lto = "thin"
+lto = "fat"
+codegen-units = 1
+# A panic closes the app at once. This removes the unwind code.
+panic = "abort"
 strip = true
+
+# These crates do not run while the app draws, so they are built for size.
+
+[profile.release.package.zbus]
+opt-level = "s"
+
+[profile.release.package.zvariant]
+opt-level = "s"
+
+[profile.release.package.secret-service]
+opt-level = "s"
+
+[profile.release.package.keyring]
+opt-level = "s"
+
+[profile.release.package.keyring-core]
+opt-level = "s"
+
+[profile.release.package.zbus-secret-service-keyring-store]
+opt-level = "s"
+
+[profile.release.package.mundy]
+opt-level = "s"
+
+[profile.release.package.rfd]
+opt-level = "s"
+
+[profile.release.package.russh]
+opt-level = "s"
+
+[profile.release.package.ssh-key]
+opt-level = "s"
+
+[profile.release.package.ssh-encoding]
+opt-level = "s"
+
+[profile.release.package.crypto-bigint]
+opt-level = "s"
+
+[profile.release.package.rsa]
+opt-level = "s"
+
+[profile.release.package.naga]
+opt-level = "s"
 
 [dev-dependencies]
 resvg = "0.49.0"

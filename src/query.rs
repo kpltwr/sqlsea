@@ -5,8 +5,7 @@ use std::time::Instant;
 
 use iced::keyboard::{Key, key::Named};
 use iced::widget::{
-    Column, Row, button, column, container, row, scrollable, space, svg, text, text_editor,
-    text_input,
+    Column, Row, button, column, container, row, scrollable, space, text, text_editor, text_input,
 };
 use iced::{Center, Element, Fill, Length, Padding};
 
@@ -76,12 +75,14 @@ impl QueryTab {
             return None;
         }
         let line = self.editor.line(cursor.position.line)?;
-        crate::complete::complete(
-            &self.editor.text(),
-            &line.text,
-            cursor.position.column,
-            catalog,
-        )
+        // The whole text names the tables in use, but reading it on every frame is
+        // slow for long scripts. Then only the current line is read.
+        let text = if self.editor.line_count() > 300 {
+            line.text.to_string()
+        } else {
+            self.editor.text()
+        };
+        crate::complete::complete(&text, &line.text, cursor.position.column, catalog)
     }
 
     /// Replaces the word at the cursor with suggestion `index`.
@@ -267,11 +268,13 @@ impl Queries {
     }
 
     /// `width` is the width of the main area. `panel` is the width of the history panel, if it is open.
+    /// `viewport` is where the result grid is scrolled to, and its height.
     pub fn view(
         &self,
         width: f32,
         panel: f32,
         catalog: &crate::complete::Catalog,
+        viewport: Option<(f32, f32)>,
     ) -> Element<'_, Message> {
         let tab = self.active();
         let running = tab.running();
@@ -345,6 +348,7 @@ impl Queries {
                     sort: None,
                     ids: QUERY_GRID,
                     on_scroll: Message::GridScrolled,
+                    viewport,
                     on_edit: None,
                     edit: None,
                     changes: None,
@@ -408,10 +412,13 @@ impl Queries {
         let tabs = Row::with_children(self.tabs.iter().enumerate().map(|(i, tab)| {
             let active = i == self.active;
             let close = button(
-                svg(svg::Handle::from_memory(crate::chrome::CLOSE))
-                    .width(14)
-                    .height(14)
-                    .style(theme::query_tab_icon(active)),
+                container(
+                    text("×")
+                        .font(theme::BODY)
+                        .size(16)
+                        .style(theme::query_tab_mark(active)),
+                )
+                .center(14),
             )
             .padding(2)
             .style(theme::query_tab_close(active))

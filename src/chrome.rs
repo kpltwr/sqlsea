@@ -4,7 +4,7 @@
 //! draws does not use the colors of sqlsea, so on Linux the top bar of the app
 //! is the title bar. macOS and Windows keep their own title bars.
 
-use iced::widget::{button, column, container, mouse_area, row, space, stack, svg};
+use iced::widget::{button, column, container, mouse_area, row, space, stack, text};
 use iced::window::{self, Direction};
 use iced::{Element, Fill, Length, Task, mouse};
 
@@ -54,25 +54,29 @@ pub fn controls<'a, M: Clone + 'a>(on_action: fn(Action) -> M) -> Option<Element
     if !CUSTOM {
         return None;
     }
-    let control = |icon: &'static [u8], action: Action, close: bool| -> Element<'a, M> {
-        button(
-            svg(svg::Handle::from_memory(icon))
-                .width(16)
-                .height(16)
-                .style(theme::window_icon),
-        )
-        .width(28)
-        .height(28)
-        .padding(6)
-        .style(theme::window_button(close))
-        .on_press(on_action(action))
-        .into()
+    // The marks are plain shapes and one font glyph, so no image or SVG code is needed.
+    let control = |mark: Element<'a, M>, action: Action, close: bool| -> Element<'a, M> {
+        button(container(mark).center(16))
+            .width(28)
+            .height(28)
+            .padding(6)
+            .style(theme::window_button(close))
+            .on_press(on_action(action))
+            .into()
     };
+    let minimize = container(space().width(10).height(1.5)).style(theme::window_mark_line);
+    let maximize = container(space().width(9).height(9)).style(theme::window_mark_box);
+    // A line height of 1 keeps the glyph centred like the other two marks.
+    let close = text("×")
+        .font(theme::BODY)
+        .size(18)
+        .line_height(1.0)
+        .style(theme::text_ink2);
     Some(
         row![
-            control(MINIMIZE, Action::Minimize, false),
-            control(MAXIMIZE, Action::ToggleMaximize, false),
-            control(CLOSE, Action::Close, true),
+            control(minimize.into(), Action::Minimize, false),
+            control(maximize.into(), Action::ToggleMaximize, false),
+            control(close.into(), Action::Close, true),
         ]
         .spacing(6)
         .into(),
@@ -118,7 +122,3 @@ pub fn frame<'a, M: Clone + 'a>(
     ];
     stack![container(content).style(theme::window_frame), grips].into()
 }
-
-const MINIMIZE: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M4 8.5h8" stroke="black" stroke-width="1.3" stroke-linecap="round"/></svg>"#;
-const MAXIMIZE: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect x="4.5" y="4.5" width="7" height="7" rx="1" fill="none" stroke="black" stroke-width="1.3"/></svg>"#;
-pub const CLOSE: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M5 5l6 6M11 5l-6 6" stroke="black" stroke-width="1.3" stroke-linecap="round"/></svg>"#;

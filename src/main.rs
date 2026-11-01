@@ -18,8 +18,8 @@ mod tunnel;
 
 use iced::keyboard::{self, Key, key::Named};
 use iced::widget::{
-    Column, Row, button, checkbox, column, container, operation, responsive, row, scrollable,
-    space, svg, text, text_editor, text_input,
+    Column, Row, button, checkbox, column, container, image, operation, responsive, row,
+    scrollable, space, text, text_editor, text_input,
 };
 use iced::{Center, Element, Fill, Length, Padding, Subscription, Task};
 
@@ -78,14 +78,19 @@ fn window_size() -> iced::Size {
 }
 
 fn window_icon() -> Option<iced::window::Icon> {
-    let decoder = png::Decoder::new(std::io::Cursor::new(
-        include_bytes!("../brand/png/icon-256.png").as_slice(),
-    ));
-    let mut reader = decoder.read_info().ok()?;
+    let (rgba, width, height) = decode_png(include_bytes!("../brand/png/icon-256.png"))?;
+    iced::window::icon::from_rgba(rgba, width, height).ok()
+}
+
+/// RGBA pixels, width and height of a PNG image.
+fn decode_png(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
+    let mut reader = png::Decoder::new(std::io::Cursor::new(bytes))
+        .read_info()
+        .ok()?;
     let mut rgba = vec![0; reader.output_buffer_size()?];
     let info = reader.next_frame(&mut rgba).ok()?;
     rgba.truncate(info.buffer_size());
-    iced::window::icon::from_rgba(rgba, info.width, info.height).ok()
+    Some((rgba, info.width, info.height))
 }
 
 enum Load<T> {
@@ -398,6 +403,8 @@ enum Message {
     Shoot(String),
     #[cfg(feature = "shot")]
     ScrollFormEnd,
+    #[cfg(feature = "shot")]
+    ScrollQueryGrid(f32),
 }
 
 impl App {
@@ -635,6 +642,16 @@ impl App {
                     operation::AbsoluteOffset {
                         x: Some(scrolled.x),
                         y: None,
+                    },
+                );
+            }
+            #[cfg(feature = "shot")]
+            Message::ScrollQueryGrid(y) => {
+                return operation::scroll_to(
+                    QUERY_GRID.0,
+                    operation::AbsoluteOffset {
+                        x: None,
+                        y: Some(y),
                     },
                 );
             }
@@ -1220,6 +1237,11 @@ impl Session {
         let db = self.db.clone();
         let offset = self.offset;
         let filter = self.applied_filter.clone();
+        // The snap to the first row is chained below. Here only the stored
+        // position changes, so that the first frame builds the first rows.
+        if let Some((y, _)) = self.scrolled.get_mut(DATA_GRID.0) {
+            *y = 0.0;
+        }
         Task::perform(db::page(db, table, filter, order, offset, PAGE), move |r| {
             Message::PageLoaded(generation, r)
         })
@@ -1299,7 +1321,10 @@ impl Session {
                 }
                 return self.load_structure();
             }
-            Message::SwitchStructure(view) => self.structure_view = view,
+            Message::SwitchStructure(view) => {
+                self.structure_view = view;
+                return self.scroll_to_top(STRUCTURE_GRID.0);
+            }
             Message::StructureLoaded(run, result) => {
                 if run == self.structure_run {
                     if let Ok(structure) = &result {
@@ -1608,10 +1633,13 @@ impl Session {
                 if let Err(e) = store::save_history(&self.config.id, &self.queries.history) {
                     self.status = Some(Notice::Error(format!("The history was not saved: {e}")));
                 }
+                // A new result starts at its first row.
+                let top = self.scroll_to_top(QUERY_GRID.0);
                 // A statement without rows can add or remove a table, so reload the list.
                 if changed_schema {
-                    return self.load_tables();
+                    return Task::batch([top, self.load_tables()]);
                 }
+                return top;
             }
             Message::SelectQueryRow(r) => self.queries.active_mut().selected = Some(r),
             Message::Cancel => {
@@ -1640,7 +1668,8 @@ impl Session {
             Message::CloseQuery(id) => self.queries.close(id),
             Message::SelectQuery(id) => {
                 self.queries.select(id);
-                return operation::focus("sql");
+                let top = self.scroll_to_top(QUERY_GRID.0);
+                return Task::batch([top, operation::focus("sql")]);
             }
             Message::ToggleHistory => self.queries.show_history = !self.queries.show_history,
             Message::HistoryFilter(f) => self.queries.history_filter = f,
@@ -1894,6 +1923,14 @@ impl Session {
             }
         };
         Task::batch([open, self.reveal(body, next)])
+    }
+
+    /// Puts a grid at its first row, for new rows.
+    fn scroll_to_top(&mut self, body: &'static str) -> Task<Message> {
+        if let Some((y, _)) = self.scrolled.get_mut(body) {
+            *y = 0.0;
+        }
+        operation::snap_to(body, operation::RelativeOffset::START)
     }
 
     /// Scrolls a grid so that a row is visible.
@@ -2257,7 +2294,12 @@ impl Session {
                     tables: self.tables.ready().map(Vec::as_slice).unwrap_or(&[]),
                     columns: &self.column_index,
                 };
-                self.queries.view(widths.main, widths.panel, &catalog)
+                self.queries.view(
+                    widths.main,
+                    widths.panel,
+                    &catalog,
+                    self.scrolled.get(QUERY_GRID.0).copied(),
+                )
             }
         };
 
@@ -2346,6 +2388,7 @@ impl Session {
                 sort: self.sort,
                 ids: DATA_GRID,
                 on_scroll: Message::GridScrolled,
+                viewport: self.scrolled.get(DATA_GRID.0).copied(),
                 on_edit: self
                     .editable()
                     .then_some(Message::EditCell as fn(usize, usize) -> Message),
@@ -2513,23 +2556,29 @@ impl Session {
         ));
 
         let content: Element<_> = match (self.structure_view, &self.columns, &self.structure) {
-            (StructureView::Columns, Load::Ready(columns), _) => {
-                structure_grid(&columns.listing, "This table has no columns.")
-            }
+            (StructureView::Columns, Load::Ready(columns), _) => structure_grid(
+                &columns.listing,
+                "This table has no columns.",
+                self.scrolled.get(STRUCTURE_GRID.0).copied(),
+            ),
             (StructureView::Columns, Load::Failed(e), _) | (_, _, Load::Failed(e)) => {
                 empty_state_error(e)
             }
             (StructureView::Columns, _, _) | (_, _, Load::Idle | Load::Loading) => grid::skeleton(),
-            (StructureView::Indexes, _, Load::Ready(s)) => {
-                structure_grid(&s.indexes, "This table has no indexes.")
-            }
+            (StructureView::Indexes, _, Load::Ready(s)) => structure_grid(
+                &s.indexes,
+                "This table has no indexes.",
+                self.scrolled.get(STRUCTURE_GRID.0).copied(),
+            ),
             (StructureView::ForeignKeys, _, Load::Ready(s)) => structure_grid(
                 &s.foreign_keys,
                 "This table has no foreign keys to other tables.",
+                self.scrolled.get(STRUCTURE_GRID.0).copied(),
             ),
             (StructureView::ReferencedBy, _, Load::Ready(s)) => structure_grid(
                 &s.referenced_by,
                 "No foreign key in another table points to this table.",
+                self.scrolled.get(STRUCTURE_GRID.0).copied(),
             ),
             (StructureView::Sql, _, Load::Ready(_)) => container(
                 text_editor(&self.structure_sql)
@@ -2882,8 +2931,10 @@ fn millis(d: std::time::Duration) -> String {
 // ---------- small views ----------
 
 /// The app icon, read once.
-static ICON: std::sync::LazyLock<svg::Handle> =
-    std::sync::LazyLock::new(|| svg::Handle::from_memory(theme::ICON_SVG));
+static ICON: std::sync::LazyLock<image::Handle> = std::sync::LazyLock::new(|| {
+    let (rgba, width, height) = decode_png(theme::ICON_PNG).unwrap_or_default();
+    image::Handle::from_rgba(width, height, rgba)
+});
 
 fn top_bar<'a>(
     left: impl Into<Element<'a, Message>>,
@@ -2910,7 +2961,7 @@ fn top_bar<'a>(
     let bar = container(
         row![
             row![
-                svg(ICON.clone()).width(22).height(22),
+                image(ICON.clone()).width(22).height(22),
                 text("sqlsea").font(theme::DISPLAY).size(theme::TEXT_LG),
             ]
             .spacing(8)
@@ -3124,7 +3175,11 @@ fn quiet_toggle<'a>(label: &'a str, on: bool, message: Message) -> Element<'a, M
 }
 
 /// A grid in the Structure tab, or a note if it has no rows.
-fn structure_grid<'a>(rs: &'a ResultSet, empty: &'static str) -> Element<'a, Message> {
+fn structure_grid<'a>(
+    rs: &'a ResultSet,
+    empty: &'static str,
+    viewport: Option<(f32, f32)>,
+) -> Element<'a, Message> {
     if rs.rows.is_empty() {
         return empty_state(empty, None);
     }
@@ -3136,6 +3191,7 @@ fn structure_grid<'a>(rs: &'a ResultSet, empty: &'static str) -> Element<'a, Mes
         sort: None,
         ids: STRUCTURE_GRID,
         on_scroll: Message::GridScrolled,
+        viewport,
         on_edit: None,
         edit: None,
         changes: None,
@@ -3378,6 +3434,7 @@ fn script() -> Task<Message> {
             "applyurl" => Some(Message::ApplyUrl),
             "search" => Some(Message::Filter(arg.to_string())),
             "formend" => Some(Message::ScrollFormEnd),
+            "scrollquery" => arg.parse().ok().map(Message::ScrollQueryGrid),
             "structure" => Some(Message::SwitchStructure(match arg {
                 "indexes" => StructureView::Indexes,
                 "keys" => StructureView::ForeignKeys,

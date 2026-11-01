@@ -5,7 +5,7 @@
 
 use iced::border::{self, Radius};
 use iced::font::{Family, Weight};
-use iced::widget::{button, checkbox, container, scrollable, svg, text, text_editor, text_input};
+use iced::widget::{button, checkbox, container, scrollable, text, text_editor, text_input};
 use iced::{Background, Border, Color, Font, Shadow, Theme, Vector};
 
 const fn rgb(r: u8, g: u8, b: u8) -> Color {
@@ -163,8 +163,8 @@ pub const FONTS: [&[u8]; 5] = [
     include_bytes!("../assets/fonts/JetBrainsMono-Regular.ttf"),
 ];
 
-/// The app icon, drawn in the top bar.
-pub const ICON_SVG: &[u8] = include_bytes!("../brand/svg/icon.svg");
+/// The app icon in the top bar. 64 px keeps it sharp at 22 px on high-density screens.
+pub const ICON_PNG: &[u8] = include_bytes!("../brand/png/icon-64.png");
 
 // Text sizes. Each size is about 1.125 times the one before it.
 pub const TEXT_XS: f32 = 12.0;
@@ -611,9 +611,20 @@ pub fn window_button(close: bool) -> impl Fn(&Theme, button::Status) -> button::
     }
 }
 
-pub fn window_icon(theme: &Theme, _: svg::Status) -> svg::Style {
-    svg::Style {
-        color: Some(colors(theme).ink2),
+/// The minimize mark: a short line.
+pub fn window_mark_line(theme: &Theme) -> container::Style {
+    fill(colors(theme).ink2)
+}
+
+/// The maximize mark: a square outline.
+pub fn window_mark_box(theme: &Theme) -> container::Style {
+    container::Style {
+        border: Border {
+            color: colors(theme).ink2,
+            width: 1.3,
+            radius: 1.5.into(),
+        },
+        ..Default::default()
     }
 }
 
@@ -680,12 +691,11 @@ pub fn query_tab_close(active: bool) -> impl Fn(&Theme, button::Status) -> butto
     }
 }
 
-pub fn query_tab_icon(active: bool) -> impl Fn(&Theme, svg::Status) -> svg::Style {
-    move |theme, _| {
+/// The close mark in a query tab.
+pub fn query_tab_mark(active: bool) -> impl Fn(&Theme) -> text::Style {
+    move |theme| {
         let c = colors(theme);
-        svg::Style {
-            color: Some(if active { c.graphite_muted } else { c.muted }),
-        }
+        tinted(if active { c.graphite_muted } else { c.muted })
     }
 }
 

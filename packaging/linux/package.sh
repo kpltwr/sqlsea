@@ -10,6 +10,9 @@ name="sqlsea-$version-linux-$(uname -m)"
 stage=dist/stage
 dir="$stage/$name"
 
+# The build writes "~" for your home folder in the file paths that the
+# binary keeps for error messages. Your user name is then not in the package.
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$HOME=~"
 cargo build --release --locked
 
 rm -rf "$stage"
@@ -20,6 +23,7 @@ for size in 16 24 32 48 64 128 256 512; do
 done
 cp brand/svg/icon.svg "$dir/icons/"
 cp packaging/linux/sqlsea.desktop packaging/linux/install.sh README.md LICENSE-MIT LICENSE-APACHE "$dir/"
-tar -C "$stage" -czf "dist/$name.tar.gz" "$name"
+# The files in the package have no owner name.
+tar -C "$stage" --owner=0 --group=0 --numeric-owner -czf "dist/$name.tar.gz" "$name"
 rm -rf "$stage"
 echo "dist/$name.tar.gz"

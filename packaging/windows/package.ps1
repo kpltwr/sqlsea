@@ -12,6 +12,9 @@ $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"$' |
     Select-Object -First 1).Matches[0].Groups[1].Value
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x86_64' }
 
+# The build writes "~" for your user folder in the file paths that the
+# binary keeps for error messages. Your user name is then not in the package.
+$env:RUSTFLAGS = "$env:RUSTFLAGS --remap-path-prefix=$env:USERPROFILE=~"
 cargo build --release --locked
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

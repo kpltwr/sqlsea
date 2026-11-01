@@ -18,6 +18,9 @@ stage=dist/stage
 app="$stage/sqlsea.app"
 out="dist/sqlsea-$version-macos.dmg"
 
+# The build writes "~" for your home folder in the file paths that the
+# binary keeps for error messages. Your user name is then not in the package.
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$HOME=~"
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
 cargo build --release --locked --target aarch64-apple-darwin
 cargo build --release --locked --target x86_64-apple-darwin
